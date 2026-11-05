@@ -29,6 +29,34 @@ function normalizeGroups(db) {
   }
 }
 
+// 사용일을 세는 기간 (고정, 사용자 결정 2026-11-05): FW = 그해 8/1 ~ 다음 해 6/30, SS = 그해 3/1 ~ 11/30
+// 화면의 시즌 기간(start~end)은 경과율·예상 횟수에만 쓰고, 사용일이 어느 시즌인지는 옷의 구분 + 날짜로 정한다
+const WINDOW_TEXT = { FW: '8월 ~ 다음 해 6월', SS: '3월 ~ 11월' };
+function countWindow(type, year) {
+  return type === 'FW' ? [`${year}-08-01`, `${year + 1}-06-30`] : [`${year}-03-01`, `${year}-11-30`];
+}
+// 날짜가 속하는 집계 연도. null = 그 구분 옷은 입을 수 없는 날 (FW 7월, SS 12~2월)
+function windowYear(type, date) {
+  const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7));
+  if (type === 'FW') return m >= 8 ? y : m <= 6 ? y - 1 : null;
+  return m >= 3 && m <= 11 ? y : null;
+}
+// 시즌의 집계 연도: FW는 시작일이 1~6월이면 전년도 시즌으로 봄
+function seasonYear(s) {
+  const y = Number(s.start.slice(0, 4)), m = Number(s.start.slice(5, 7));
+  return s.type === 'FW' && m <= 6 ? y - 1 : y;
+}
+// 날짜가 속하는 시즌 ID ('' = 그 기간의 시즌이 아직 없음)
+function seasonForDate(db, type, date) {
+  const y = windowYear(type, date);
+  return y == null ? '' : (db.seasons.find((s) => s.type === type && seasonYear(s) === y)?.id || '');
+}
+// 모든 사용일의 시즌을 날짜로 다시 정함 (시즌을 만들거나 기간을 고치면, 그 기간의 기록이 자연스럽게 들어감)
+function relinkSeasons(db) {
+  const typeOf = Object.fromEntries(db.items.map((i) => [i.id, i.type]));
+  for (const u of db.usage) if (typeOf[u.itemId]) u.seasonId = seasonForDate(db, typeOf[u.itemId], u.date);
+}
+
 function seasonOf(db, type) {
   const id = db.currentSeason[type];
   return db.seasons.find((s) => s.id === id) || null;
@@ -169,7 +197,7 @@ function normalizeOrder(db) {
   }
 }
 
-function dbToWorkbook(XLSX, db) {
+function dbToWorkbook(XLSX, db, kind = '') { // kind: 최신본 / 시즌최종본 (정보 시트에 적음)
   const gName = Object.fromEntries(db.groups.map((g) => [g.id, g.name]));
   const gOrder = Object.fromEntries(db.groups.map((g) => [g.id, g.order]));
   const sorted = [...db.items].sort((a, b) => a.type.localeCompare(b.type) || (gOrder[a.groupId] ?? 99) - (gOrder[b.groupId] ?? 99) || a.order - b.order);
@@ -189,7 +217,7 @@ function dbToWorkbook(XLSX, db) {
   // 옷 정보는 의류목록에만 (의류ID로 연결)
   const usageRows = (type) => db.usage.filter((u) => (itemById[u.itemId] || {}).type === type).sort((a, b) => a.date.localeCompare(b.date)).map((u) => ({
     '기록ID': u.id, '사용일': u.date, '구분': u.planned ? '예정' : '실제', '의류ID': u.itemId,
-    '시즌ID': u.seasonId || '', '메모': u.memo || '',
+    '메모': u.memo || '',
   }));
   const groups = db.groups.map((g) => ({ 'ID': g.id, '시즌구분': g.type, '그룹명': g.name, '기온·추천월': g.temp || '', '순서': g.order }));
   const colors = db.colors.map((c) => ({ '색상명': c.name, '색상코드': c.hex }));
@@ -199,6 +227,7 @@ function dbToWorkbook(XLSX, db) {
   }));
   const terms = TERM_FIELDS.flatMap((f) => (db.terms?.[f] || []).map((v) => ({ '항목': f, '값': v })));
   const info = [
+    ...(kind ? [{ '항목': '파일종류', '값': kind }] : []),
     { '항목': '저장일시', '값': new Date().toLocaleString('ko-KR') },
     { '항목': '형식버전', '값': db.version },
     { '항목': '안내', '값': '의류목록의 Cur Us/그룹/마지막사용일/사용일 열은 계산값이라 불러올 때 무시됩니다. 사용일 수정은 사용기록FW/사용기록SS 시트에서 하세요.' },
@@ -212,7 +241,7 @@ function dbToWorkbook(XLSX, db) {
   };
   add('의류목록', items, ITEM_COLS.map((c) => c[0]),
     [6, 6, 6, 10, 4, 4, 6, 5, 5, 4, 14, 14, 14, 13, 7, 11, 8, 10, 10, 12, 11, 24, 12]);
-  for (const t of ['FW', 'SS']) add('사용기록' + t, usageRows(t), ['기록ID', '사용일', '구분', '의류ID', '시즌ID', '메모'],
+  for (const t of ['FW', 'SS']) add('사용기록' + t, usageRows(t), ['기록ID', '사용일', '구분', '의류ID', '메모'],
     [7, 11, 5, 6, 8, 16]);
   add('그룹', groups, ['ID', '시즌구분', '그룹명', '기온·추천월', '순서'], [5, 7, 12, 24, 5]);
   add('색상', colors, ['색상명', '색상코드'], [16, 10]);
@@ -273,14 +302,14 @@ function workbookToDb(XLSX, wb) {
   const usageSheets = ['사용기록FW', '사용기록SS'].filter((n) => wb.Sheets[n]);
   const usage = (usageSheets.length ? usageSheets : ['사용기록']).flatMap((n) => rows(n)).map((r) => ({
     id: str(r['기록ID']), date: cellDate(r['사용일']), itemId: str(r['의류ID']),
-    seasonId: str(r['시즌ID']), planned: str(r['구분']) === '예정', memo: str(r['메모']),
+    planned: str(r['구분']) === '예정', memo: str(r['메모']),
   })).filter((u) => u.date && ids.has(u.itemId));
-  // ID 없는 기록(엑셀에서 직접 추가한 줄)에 ID 부여, 시즌ID 없으면 그 의류 구분의 현재 시즌
+  // ID 없는 기록(엑셀에서 직접 추가한 줄)에 ID 부여. 시즌은 저장하지 않고 옷의 구분 + 날짜로 정함
   let maxU = Math.max(0, ...usage.map((u) => Number(u.id.slice(1)) || 0));
   const typeOf = Object.fromEntries(items.map((i) => [i.id, i.type]));
   for (const u of usage) {
     if (!u.id) u.id = 'U' + String(++maxU).padStart(4, '0');
-    if (!u.seasonId) u.seasonId = currentSeason[typeOf[u.itemId]] || '';
+    u.seasonId = seasonForDate({ seasons }, typeOf[u.itemId], u.date);
   }
 
   // 의류목록에 있지만 색상 시트에 없는 색은 회색으로 추가
@@ -303,5 +332,5 @@ function workbookToDb(XLSX, wb) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
+  module.exports = { countWindow, windowYear, seasonYear, seasonForDate, relinkSeasons, WINDOW_TEXT, todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
 }

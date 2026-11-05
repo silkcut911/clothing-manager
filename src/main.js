@@ -5,6 +5,8 @@ if (db.termsVersion !== TERMS_VERSION) normalizeTerms(db); // 표기 통일 (버
 normalizeOrder(db);
 normalizeGroups(db);
 normalizeSeasons(db);
+pruneOld(); // 5년이 지난 기록·시즌 정리
+relinkSeasons(db); // 사용일의 시즌을 날짜로 (FW 8월~다음 해 6월, SS 3월~11월)
 // 테스트용 1회 수정: 2026-10-05 사용기록을 착용예정으로 (요청 2026-11-05)
 if (!db.meta.fix1005) {
   db.usage.forEach((u) => { if (u.date === '2026-10-05') u.planned = true; });

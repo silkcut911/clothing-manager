@@ -64,24 +64,51 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   await click('#paOk'); await wait(200);
   check('예정일 → 실제로 확정', await page.evaluate(() => db.usage.find((u) => u.id === 'U9901').planned === false));
 
-  // 5. 백업본 저장 (기준일까지 + 예정일)
-  await page.evaluate(() => { db.usage.push({ id: 'U9902', date: addDays(todayStr(), 10), itemId: 'C033', seasonId: db.currentSeason.FW, planned: true, memo: '' }); save(); });
+  // 5. 엑셀로 저장 = 최신본 (파일 이름, 이전 최신본 이름 기억), 백업본 칸 없음
   await page.goto(URL + '#/settings'); await wait(200);
-  await click('#snapAdd'); await wait(100);
-  await page.evaluate(() => { const f = document.querySelector('#f'); f.name.value = 'T'; f.base.value = '2026-10-01'; f.cut.checked = true; });
-  await click('#f button.pri'); await wait(200);
-  const snap = await page.evaluate(() => { const s = savesOf('FW')[0]; return { maxReal: s.data.usage.filter((u) => !u.planned).map((u) => u.date).sort().pop(), hasPlan: s.data.usage.some((u) => u.id === 'U9902') }; });
-  check('백업본: 기준일까지 실제 + 예정일 포함', snap.maxReal <= '2026-10-01' && snap.hasPlan, JSON.stringify(snap));
+  check('설정에 백업본 칸 없음', await page.evaluate(() => !document.getElementById('snapAdd')));
+  await click('#exp'); await wait(200);
+  await click('#exp'); await wait(200);
+  const exp = await page.evaluate(() => db.meta.lastExportName || '');
+  check('엑셀로 저장 → 의류관리_최신본_날짜_시각', /^의류관리_최신본_\d{8}_\d{4}\.xlsx$/.test(exp), exp);
 
   // 6. 시즌: 만들기 → 시작 시도(진행중 있어 종료 화면) → 종료 → 시작
+  await page.goto(URL + '#/settings'); await wait(200);
   await click('#sAdd'); await wait(100); await click('#f button.pri'); await wait(200);
   await click('[data-sstart]'); await wait(300);
   check('진행중 시즌이 있으면 종료 검토 화면으로', await page.evaluate(() => location.hash.startsWith('#/end/')));
   while (await page.evaluate(() => { const e = document.querySelector('.list-date[data-pu]'); if (e) e.click(); return !!e; })) { await wait(150); await click('#paOk'); await wait(250); }
   await click('#endOk'); await wait(50); await click('#endBtn'); await wait(400);
-  const ended = await page.evaluate(() => ({ cur: db.currentSeason.FW, finals: finalsOf('FW').length, locked: removeUsage(db.usage.find((u) => !u.planned).id) === false }));
-  check('시즌 종료 → 최종본 + 잠김', ended.cur === null && ended.finals === 1 && ended.locked, JSON.stringify(ended));
-  check('진행중 시즌 없으면 기록 막힘', await page.evaluate(() => addUsage('C002', todayStr()) === null));
+  const ended = await page.evaluate(() => ({ cur: db.currentSeason.FW, finals: finalsOf('FW').length }));
+  check('시즌 종료 → 최종본', ended.cur === null && ended.finals === 1, JSON.stringify(ended));
+  // 지난 시즌 기록도 고칠 수 있고, 고치면 최종본에도 반영
+  const past = await page.evaluate(() => {
+    const sid = finalsOf('FW')[0].seasonId;
+    const recs = db.usage.filter((u) => !u.planned && u.seasonId === sid);
+    const [a, b] = recs;
+    a.memo = 'past-edit'; syncFinal(a);
+    removeUsage(b.id);
+    const f = finalsOf('FW')[0];
+    return { memo: f.data.usage.find((u) => u.id === a.id)?.memo, removed: !f.data.usage.some((u) => u.id === b.id) && !db.usage.some((u) => u.id === b.id) };
+  });
+  check('지난 시즌 기록 수정·삭제 → 최종본에도 반영', past.memo === 'past-edit' && past.removed, JSON.stringify(past));
+  // 시즌은 옷의 구분 + 날짜로 (FW 8월~다음 해 6월, SS 3월~11월). 기간 밖은 막고, 시즌이 없으면 시즌 없이 기록 → 시즌을 만들면 들어감
+  const win = await page.evaluate(() => {
+    const fw = db.items.find((i) => i.type === 'FW' && i.active), ss = db.items.find((i) => i.type === 'SS');
+    const julBlocked = addUsage(fw.id, '2026-07-15', { silent: true }) === null;
+    const decBlocked = addUsage(ss.id, '2025-12-10', { silent: true }) === null;
+    const toEnded = addUsage(fw.id, '2027-05-02', { silent: true, planned: false }); // 종료된 FW 2026-27 기간 → 그 최종본에도
+    const inFinal = finalsOf('FW')[0].data.usage.some((u) => u.id === toEnded.id);
+    const noSeason = addUsage(fw.id, '2025-10-10', { silent: true, planned: false }); // FW 2025-26 시즌 없음
+    const orphan = noSeason.seasonId === '';
+    db.seasons.push({ id: 'FW2025', type: 'FW', name: 'FW 2025-26', start: '2025-09-01', end: '2026-04-30', status: 'ready' });
+    relinkSeasons(db);
+    const linked = db.usage.find((u) => u.id === noSeason.id).seasonId === 'FW2025';
+    db.seasons = db.seasons.filter((s) => s.id !== 'FW2025');
+    db.usage = db.usage.filter((u) => u.id !== noSeason.id); relinkSeasons(db); save();
+    return { julBlocked, decBlocked, toEnded: toEnded.seasonId === finalsOf('FW')[0].seasonId, inFinal, orphan, linked };
+  });
+  check('시즌은 날짜로: 기간 밖 막기, 지난 시즌 추가, 시즌 없으면 나중에 연결', win.julBlocked && win.decBlocked && win.toEnded && win.inFinal && win.orphan && win.linked, JSON.stringify(win));
   await page.goto(URL + '#/settings'); await wait(200);
   const before = await page.evaluate(() => JSON.stringify(db.items.filter((i) => i.type === 'FW').map((i) => [i.id, i.active])));
   await click('[data-sstart]'); await wait(200);
@@ -94,11 +121,20 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   check('새 시즌 시작 (활성/비활성 그대로·Ex도 활성, New는 산 해와 다음 해까지)', started.cur && started.sameActive && started.exActive && started.oldNew === 0, JSON.stringify(started));
   const fid = await page.evaluate(() => finalsOf('FW')[0].id);
   await page.goto(URL + '#/past/' + fid); await wait(300);
-  check('지난 시즌 보기 (읽기 전용)', await page.evaluate(() => document.querySelectorAll('table.ctbl tr.r1').length > 0 && !document.querySelector('[data-pu]')));
+  check('지난 시즌 보기 (엑셀 버튼 없음)', await page.evaluate(() => document.querySelectorAll('table.ctbl tr.r1').length > 0 && !document.querySelector('[data-pu]') && !document.getElementById('pxBtn')));
 
-  // 7. 백업본 복원
-  await page.evaluate(() => restoreSnap(savesOf('FW').find((x) => x.name === 'T'))); await wait(200);
-  check('백업본 복원 + 복원 전 자동 백업', await page.evaluate(() => savesOf('FW').some((x) => x.name === '복원 전 자동')));
+  // 7. 5년 보관: 5년 넘은 기록·종료 시즌·최종본 정리
+  const pr = await page.evaluate(() => {
+    const it = db.items[0];
+    db.usage.push({ id: 'U9990', date: addDays(todayStr(), -365 * 5 - 10), itemId: it.id, seasonId: 'OLD', planned: false, memo: '' });
+    db.usage.push({ id: 'U9991', date: addDays(todayStr(), -365 * 4), itemId: it.id, seasonId: 'OLD2', planned: false, memo: '' });
+    db.seasons.push({ id: 'OLD', type: 'FW', name: 'FW 2020-21', start: '2020-09-01', end: '2021-04-30', status: 'ended' });
+    addSnap({ id: 'SOLD', type: 'FW', kind: 'final', seasonId: 'OLD', seasonName: 'FW 2020-21', seasonStart: '2020-09-01', created: '2021-05-01', data: { seasons: [], groups: [], items: [], usage: [], colors: [] } });
+    pruneOld();
+    return { oldGone: !db.usage.some((u) => u.id === 'U9990'), recentKept: db.usage.some((u) => u.id === 'U9991'), seasonGone: !seasonById('OLD'), finalGone: !loadSnaps().some((x) => x.id === 'SOLD') };
+  });
+  check('5년 지난 기록·시즌·최종본 정리, 4년 전 기록은 유지', Object.values(pr).every(Boolean), JSON.stringify(pr));
+  await page.evaluate(() => { db.usage = db.usage.filter((u) => u.id !== 'U9991'); save(); });
 
   // 8. 이전본 되돌리기 (어제 고친 데이터 → 오늘 잘못 고침 → 되돌리기 → 오늘본으로 다시)
   await page.evaluate(() => { const d = JSON.parse(localStorage.getItem('clothes-db-v1')); d.meta.editDay = '2000-01-01'; d.items[0].memo = 'yesterday'; localStorage.setItem('clothes-db-v1', JSON.stringify(d)); localStorage.removeItem('clothes-undo-v1'); });
@@ -114,13 +150,14 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
 
   // 9. 엑셀로 저장 → 불러오기 결과가 같은지
   const rt = await page.evaluate(() => {
-    const wb = dbToWorkbook(XLSX, db); addFinalsToWorkbook(wb);
+    const wb = dbToWorkbook(XLSX, db, '최신본'); addFinalsToWorkbook(wb);
     const wb2 = XLSX.read(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
     const nd = workbookToDb(XLSX, wb2);
     const key = (d) => JSON.stringify(d.items.map((i) => [i.id, i.brand, i.color, i.pad, i.tg, i.yr]).sort());
-    return { items: key(nd) === key(db), usage: nd.usage.length === db.usage.length, finals: readFinalsFromWorkbook(wb2).length };
+    const info = Object.fromEntries(XLSX.utils.sheet_to_json(wb2.Sheets['정보']).map((r) => [r['항목'], r['값']]));
+    return { items: key(nd) === key(db), usage: nd.usage.length === db.usage.length, finals: readFinalsFromWorkbook(wb2).length === finalsOf('FW').length + finalsOf('SS').length, kind: info['파일종류'], noFinalSheets: !wb2.SheetNames.some((n) => n.endsWith(' 최종')) };
   });
-  check('엑셀로 저장했다가 불러와도 같음 (+최종본)', rt.items && rt.usage && rt.finals >= 1, JSON.stringify(rt));
+  check('엑셀로 저장했다가 불러와도 같음 (+모든 최종본, 파일종류, 펼친 시트 없음)', rt.items && rt.usage && rt.finals && rt.kind === '최신본' && rt.noFinalSheets, JSON.stringify(rt));
 
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));
   await browser.close();

@@ -167,16 +167,24 @@ function modal(html, onMount, onClose) {
   return close;
 }
 
-// 사용 기록 추가. 같은 날 중복이면 경고 후 허용
+// 그 구분 옷을 입을 수 있는 날인지 (FW 8월~다음 해 6월, SS 3월~11월). 아니면 안내하고 false
+function okDate(it, date) {
+  if (windowYear(it.type, date) != null) return true;
+  alert(`${it.type} 옷은 ${WINDOW_TEXT[it.type]}에만 기록할 수 있습니다.\n(${md(date)}은 ${it.type} 기간이 아닙니다)`);
+  return false;
+}
+
+// 사용 기록 추가. 시즌은 날짜로 정함(그 기간의 시즌이 없으면 시즌 없이 기록 → 시즌을 만들면 자동으로 들어감). 같은 날 중복이면 경고 후 허용
 function addUsage(itemId, date, { planned = date > todayStr(), memo = '', silent = false } = {}) {
   const it = itemById(itemId);
-  const sid = db.currentSeason[it.type];
-  if (!sid) { alert(`${it.type} 진행중인 시즌이 없습니다.\n설정 → ${it.type} 시즌에서 새 시즌을 시작하세요.`); return null; }
+  if (!okDate(it, date)) return null;
+  const sid = seasonForDate(db, it.type, date);
   if (db.usage.some((u) => u.itemId === itemId && u.date === date)) {
     if (!confirm(`⚠ ${it.brand} ${it.color}은(는) ${md(date)}에 이미 기록되어 있습니다.\n한 번 더 기록할까요?`)) return null;
   }
   const u = { id: nextId('U', db.usage, 4), date, itemId, seasonId: sid, planned, memo };
   db.usage.push(u);
+  syncFinal(u); // 지난(종료된) 시즌 날짜면 그 최종본에도
   save();
   if (!silent) toast(`${md(date)} ${u.planned ? '계획' : '실제'} 기록: ${it.brand} ${it.color}`, () => { removeUsage(u.id); render(); });
   return u;
@@ -222,8 +230,8 @@ function askUsage(itemId, date = todayStr()) {
 }
 function removeUsage(uid) {
   const u0 = db.usage.find((u) => u.id === uid);
-  if (u0 && isLocked(u0)) { alert('종료된 시즌의 기록은 바꿀 수 없습니다.'); return false; }
   db.usage = db.usage.filter((u) => u.id !== uid);
+  syncFinal(u0, true); // 지난 시즌 기록이면 최종본에서도 지움
   save();
 }
 
@@ -256,9 +264,11 @@ function manageDates(itemId) {
         const d = m.querySelector('#rd').value;
         if (!d) return;
         if (d > todayStr()) return alert('실제 착용은 오늘까지의 날짜만 가능합니다.');
+        if (!okDate(it, d)) return;
         if (db.usage.some((x) => x !== u && x.itemId === itemId && x.date === d) && !confirm(`⚠ ${md(d)}에 이미 기록되어 있습니다.
 한 번 더 기록할까요?`)) return;
-        Object.assign(u, { date: d, planned: false, seasonId: sid });
+        Object.assign(u, { date: d, planned: false, seasonId: seasonForDate(db, it.type, d) });
+        syncFinal(u);
         save(); toReal = null; paint();
         toast(`${md(d)} 실제 착용으로 변경: ${it.brand} ${it.color}`);
       });
@@ -302,15 +312,18 @@ function planAction(uid) {
       const d = m.querySelector('#paReal').value;
       if (!d) return;
       if (d > todayStr()) return alert('실제 착용은 오늘까지의 날짜만 가능합니다.');
+      if (!okDate(it, d)) return;
       if (db.usage.some((x) => x !== u && x.itemId === u.itemId && x.date === d) && !confirm(`⚠ ${it.brand} ${it.color}은(는) ${md(d)}에 이미 기록되어 있습니다.\n한 번 더 기록할까요?`)) return;
-      Object.assign(u, { date: d, planned: false, seasonId: db.currentSeason[it.type] });
+      Object.assign(u, { date: d, planned: false, seasonId: seasonForDate(db, it.type, d) });
+      syncFinal(u);
       save(); close();
       toast(`${md(d)} 실제 착용으로 확정: ${it.brand} ${it.color}`);
     };
     m.querySelector('#paMove').onclick = () => {
       const d = m.querySelector('#paPlan').value;
       if (!d || d <= todayStr()) return alert('예정일은 내일 이후 날짜만 가능합니다.');
-      u.date = d; save(); close();
+      if (!okDate(it, d)) return;
+      Object.assign(u, { date: d, seasonId: seasonForDate(db, it.type, d) }); save(); close();
       toast(`예정일 변경: ${md(d)} ${it.brand} ${it.color}`);
     };
     m.querySelector('#paDel').onclick = () => {
@@ -582,9 +595,9 @@ function viewItem(id) {
     <div class="card">
       <div class="row" style="margin-bottom:6px"><div class="title grow">사용일 기록</div><button class="btn sm pri" id="addBtn">+ 사용일 추가</button></div>
       ${all.length ? all.map((u) => `<div class="list-date">
-          <span class="grow">${u.date} (${weekday(u.date)}) ${u.planned ? '<span class="badge b-plan">예정</span>' : ''}${u.seasonId !== sid ? `<span class="muted"> · ${esc(seasonName(u.seasonId))}</span>` : ''}${u.memo ? `<div class="muted">${esc(u.memo)}</div>` : ''}</span>
-          ${isLocked(u) ? '<span class="muted">잠김</span>' : `${u.planned ? `<button class="btn sm pri" data-pu="${u.id}">확정·변경</button>` : ''}<button class="btn sm" data-memo="${u.id}">메모</button>
-          <button class="btn sm danger" data-del="${u.id}">삭제</button>`}</div>`).join('') : '<div class="muted">기록 없음</div>'}
+          <span class="grow">${u.date} (${weekday(u.date)}) ${u.planned ? '<span class="badge b-plan">예정</span>' : ''}${u.seasonId !== sid ? `<span class="muted"> · ${u.seasonId ? esc(seasonName(u.seasonId)) : '시즌 없음'}</span>` : ''}${u.memo ? `<div class="muted">${esc(u.memo)}</div>` : ''}</span>
+          ${u.planned ? `<button class="btn sm pri" data-pu="${u.id}">확정·변경</button>` : `<button class="btn sm" data-redate="${u.id}">날짜</button>`}<button class="btn sm" data-memo="${u.id}">메모</button>
+          <button class="btn sm danger" data-del="${u.id}">삭제</button></div>`).join('') : '<div class="muted">기록 없음</div>'}
     </div>
     ${pastSeasonsHtml(it)}
     <div class="card">
@@ -605,8 +618,34 @@ function viewItem(id) {
   $app.querySelectorAll('[data-memo]').forEach((b) => (b.onclick = () => {
     const u = db.usage.find((x) => x.id === b.dataset.memo);
     const m = prompt('메모 (행사, 날씨 등)', u.memo || '');
-    if (m !== null) { u.memo = m.trim(); save(); render(); }
+    if (m !== null) { u.memo = m.trim(); syncFinal(u); save(); render(); }
   }));
+  $app.querySelectorAll('[data-redate]').forEach((b) => (b.onclick = () => redateUsage(b.dataset.redate)));
+}
+
+// 실제 기록의 날짜 바꾸기 (지난 시즌 기록도 가능, 시즌은 새 날짜로 다시 정함). 오늘까지만
+function redateUsage(uid) {
+  const u = db.usage.find((x) => x.id === uid);
+  const it = itemById(u.itemId);
+  modal(`<h2>사용일 날짜 바꾸기</h2>
+    <div class="muted" style="margin-bottom:8px">${esc(it.brand)} · ${esc(it.color)} · ${u.date} (${weekday(u.date)})${u.seasonId !== db.currentSeason[it.type] ? ` · ${esc(seasonById(u.seasonId)?.name || '')}` : ''}</div>
+    <form class="form" id="rf"><label>새 날짜 (오늘까지)</label><input type="date" name="d" value="${u.date}" max="${todayStr()}" required>
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button type="button" class="btn" id="rcancel">취소</button><button class="btn pri">저장</button></div></form>`, (m, close) => {
+    const f = m.querySelector('#rf');
+    m.querySelector('#rcancel').onclick = close;
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const d = f.d.value;
+      if (!d || d === u.date) return close();
+      if (d > todayStr()) return alert('실제 착용은 오늘까지의 날짜만 가능합니다.');
+      if (!okDate(it, d)) return;
+      if (db.usage.some((x) => x !== u && x.itemId === u.itemId && x.date === d) && !confirm(`⚠ ${md(d)}에 이미 기록되어 있습니다.\n그래도 바꿀까요?`)) return;
+      syncFinal(u, true);
+      Object.assign(u, { date: d, seasonId: seasonForDate(db, it.type, d) });
+      syncFinal(u); save(); close(); render();
+      toast(`날짜 변경: ${md(d)} ${it.brand} ${it.color}`);
+    };
+  });
 }
 
 // ---------- 의류 추가/수정 ----------
@@ -734,7 +773,7 @@ function viewDay(date) {
     rowAttr: (it) => `data-i="${it.id}"`,
     sub: (it, { u }) => (u.planned ? '<span class="badge b-plan" style="margin:0 4px 0 0">계획</span>' : '<span class="badge b-new" style="margin:0 4px 0 0">실제</span>') +
       esc(groupById(it.groupId)?.name) + (u.memo ? ' · ' + esc(u.memo) : ''),
-    right: (it, { u }) => (isLocked(u) ? '<span class="muted">잠김</span>' : `<button class="wear done" style="color:var(--bad)" data-del="${u.id}" aria-label="삭제">×</button>`),
+    right: (it, { u }) => `<button class="wear done" style="color:var(--bad)" data-del="${u.id}" aria-label="삭제">×</button>`,
   }) + `</div>` : '<div class="card muted">기록 없음</div>';
   h += `<div class="section-t">의류 추가 (누르면 날짜·실제/계획 선택)</div>
     <div class="tabs">${groups.map((g) => `<button data-pg="${g.id}" class="${g.id === pickGroup ? 'on' : ''}">${esc(g.name)}</button>`).join('')}</div>`;
@@ -804,11 +843,12 @@ function viewSettings() {
   const usedColors = new Set(db.items.map((i) => i.color));
 
   let h = banners() + `<div class="section-t">엑셀 백업 / 복원</div><div class="card">
-      <button class="btn pri block" id="exp">엑셀로 저장 (현재본 전체를 파일로)</button>
+      <button class="btn pri block" id="exp">엑셀로 저장 (최신본: 현재 데이터 전체)</button>
       <button class="btn block" id="imp" style="margin-top:8px">엑셀 불러오기 (현재 데이터 교체)</button>
-      <div class="muted" style="margin-top:8px">마지막 백업: ${db.meta.lastBackup ? db.meta.lastBackup.slice(0, 16).replace('T', ' ') : '없음'} · 자동저장: ${storageOK ? '사용 중' : '<b style="color:var(--bad)">불가 — 엑셀 저장 필수</b>'}</div>
+      <div class="muted" style="margin-top:8px">마지막 최신본: ${db.meta.lastExportName ? `<b>${esc(db.meta.lastExportName)}</b>` : '없음'}</div>
+      <div class="muted" style="margin-top:4px">마지막 백업: ${db.meta.lastBackup ? db.meta.lastBackup.slice(0, 16).replace('T', ' ') : '없음'} · 자동저장: ${storageOK ? '사용 중' : '<b style="color:var(--bad)">불가 — 엑셀 저장 필수</b>'}</div>
       <div class="muted" style="margin-top:4px">구글드라이브·카톡으로 보내기: 엑셀로 저장 후 <b>내 파일 → 다운로드</b>에서 파일을 길게 눌러 <b>공유</b></div>
-    </div>` + versionSectionHtml() + seasonSectionHtml(type) + saveSectionHtml(type);
+    </div>` + versionSectionHtml() + seasonSectionHtml(type);
   h += `<div class="section-t">${type} 그룹</div><div class="card">` +
     groups.map((g, i) => `<div class="list-date"><span class="grow"><b>${esc(g.name)}</b> <span class="muted">${tempLabel(g)} · ${groupItems(g.id).length}벌</span></span>
       <button class="btn sm" data-gm="${g.id}" data-d="-1" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -925,17 +965,25 @@ function deleteGroup(gid) {
 
 // ---------- 엑셀 ----------
 // 공유 버튼(Web Share)은 두지 않음: 안드로이드 크롬이 .xlsx 공유를 막음(Permission denied). 다운로드 후 '내 파일'에서 공유하도록 안내
-function exportXlsx() {
-  const wb = dbToWorkbook(XLSX, db);
+// 현재 데이터 전체(+ 5년 치 시즌 최종본)를 엑셀 파일로. kind: 최신본 / 시즌최종본 (정보 시트에 적음)
+function saveFullXlsx(name, kind) {
+  const wb = dbToWorkbook(XLSX, db, kind);
   addFinalsToWorkbook(wb);
-  const d = new Date();
-  const name = `의류관리_${todayStr().replace(/-/g, '')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.xlsx`;
   XLSX.writeFile(wb, name);
   db.meta.lastBackup = new Date().toISOString();
   seededNow = false;
+}
+// 엑셀로 저장 = 최신본. 다운로드 폴더에 최신본은 하나만 두도록 이전 파일을 지우라고 안내
+function exportXlsx() {
+  const d = new Date();
+  const name = `의류관리_최신본_${todayStr().replace(/-/g, '')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.xlsx`;
+  const prev = db.meta.lastExportName;
+  saveFullXlsx(name, '최신본');
+  db.meta.lastExportName = name;
   save();
-  toast(`저장됨: ${name} (다운로드 폴더) · 드라이브·카톡으로 보내려면 내 파일 → 다운로드에서 길게 눌러 공유`);
   render();
+  alert(`저장됨: ${name} (다운로드 폴더)` + (prev && prev !== name ? `\n\n다운로드 폴더에서 이전 최신본 「${prev}」을(를) 지우세요. 최신본은 하나만 두면 됩니다.` : '') +
+    '\n\n드라이브·카톡으로 보내려면 내 파일 → 다운로드에서 파일을 길게 눌러 공유하세요.');
 }
 function importXlsx() {
   const inp = document.getElementById('fileIn');
@@ -947,10 +995,13 @@ function importXlsx() {
       const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
       const nd = workbookToDb(XLSX, wb);
       const finals = readFinalsFromWorkbook(wb);
-      if (!confirm(`${file.name}\n의류 ${nd.items.length}벌, 사용기록 ${nd.usage.length}건\n현재 데이터를 이 파일로 교체할까요?`)) return;
+      const info = wb.Sheets['정보'] ? Object.fromEntries(XLSX.utils.sheet_to_json(wb.Sheets['정보'], { defval: '' }).map((r) => [r['항목'], r['값']])) : {};
+      if (!confirm(`${file.name}\n${info['파일종류'] ? info['파일종류'] + ' · ' : ''}저장 ${info['저장일시'] || '알 수 없음'}\n의류 ${nd.items.length}벌, 사용기록 ${nd.usage.length}건\n\n현재 데이터를 이 파일로 교체할까요?\n(파일을 저장한 뒤에 넣은 기록은 사라집니다)`)) return;
       nd.viewType = db.viewType;
       nd.meta.lastBackup = db.meta.lastBackup;
+      nd.meta.lastExportName = db.meta.lastExportName;
       normalizeGroups(nd); // 예전 엑셀의 줄임말 그룹명도 원어로
+      relinkSeasons(nd);
       db = nd;
       if (finals.length) { const keep = loadSnaps().filter((x) => !finals.some((f) => f.id === x.id)); saveSnaps([...keep, ...finals]); }
       seededNow = false;
