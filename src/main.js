@@ -10,6 +10,12 @@ if (!db.meta.fix1005) {
   db.usage.forEach((u) => { if (u.date === '2026-10-05') u.planned = true; });
   db.meta.fix1005 = true;
 }
+// SS 2026(종료, 최종본 포함)·SS 2027(준비중) 추가: 출력물 사진 기준, 한 번만 (요청 2026-11-05). SS 옷이 이미 있으면 건너뜀
+if (!db.meta.ss2026) {
+  if (!db.items.some((i) => i.type === 'SS'))
+    addSeedSS(db, () => finalsOf('SS').some((f) => f.seasonId === 'SS2026') || addSnap(makeSnap('SS', 'final', { name: 'SS 2026 최종본', baseDate: '2026-09-30', seasonId: 'SS2026' })));
+  db.meta.ss2026 = true;
+}
 save();
 render();
 // 웹 주소(https)로 열었을 때: 오프라인 실행 + 브라우저가 데이터를 임의로 지우지 않도록 요청

@@ -69,7 +69,17 @@ function chipStyle(item) {
   if (/stripe/i.test(item.color)) bg = `repeating-linear-gradient(90deg, ${hex} 0 5px, #cfd3da 5px 6px)`;
   return `background:${bg};color:${textOn(hex)}`;
 }
-const chip = (item, cls = '') => `<span class="chip ${cls}" style="${chipStyle(item)}"></span>`;
+// 옷 모양(색 상자): Length로 정하고, 빈칸이면 종류로 짐작 (데이터는 바꾸지 않음)
+function shapeOf(it) {
+  const ln = it.length || '', k = it.kind || '';
+  if (/long/i.test(ln)) return 'long';
+  if (/short|rbd/i.test(ln)) return 'short';
+  if (/med/i.test(ln)) return 'medium';
+  if (/coat|trench/i.test(k)) return 'long';
+  if (/blouson/i.test(k)) return 'short';
+  return 'medium';
+}
+const chip = (item, cls = '', label = '') => `<span class="chipw"><span class="chip ${cls} shp-${shapeOf(item)}" style="${chipStyle(item)}">${label}</span></span>`;
 const badges = (it) =>
   (it.nx === 'New' ? '<span class="badge b-new">New</span>' : '') +
   (it.nx === 'Ex' ? '<span class="badge b-ex">처분예정</span>' : '') +
@@ -110,7 +120,7 @@ function itemTable(list, { rowAttr = () => '', sub = () => '', right = () => '',
     const attr = rowAttr(it, x), cls = rowClass(it, x);
     const subHtml = sub(it, x); // 비어 있으면 아랫줄 생략
     const rs = subHtml ? 2 : 1;
-    t += `<tr class="r1 ${cls} ${subHtml ? '' : 'nosub'}" ${attr}><td class="cc" rowspan="${rs}"><span class="chip xs" style="${chipStyle(it)}">${chipLabel(it)}</span></td>${COLS.map((pair) => `<td>${pair.map(([k, , b]) => `<div class="${b ? 'w7' : ''}${k === 'dates' ? ' dts' : ''}${NOWRAP.has(k) ? ' nw' : ''}">${cellHtml(it, k) || '&nbsp;'}</div>`).join('')}</td>`).join('')}<td class="rt" rowspan="${rs}">${right(it, x)}</td></tr>` +
+    t += `<tr class="r1 ${cls} ${subHtml ? '' : 'nosub'}" ${attr}><td class="cc" rowspan="${rs}">${chip(it, 'xs', chipLabel(it))}</td>${COLS.map((pair) => `<td>${pair.map(([k, , b]) => `<div class="${b ? 'w7' : ''}${k === 'dates' ? ' dts' : ''}${NOWRAP.has(k) ? ' nw' : ''}">${cellHtml(it, k) || '&nbsp;'}</div>`).join('')}</td>`).join('')}<td class="rt" rowspan="${rs}">${right(it, x)}</td></tr>` +
       (subHtml ? `<tr class="r2 ${cls}" ${attr}><td colspan="${COLS.length}">${subHtml}</td></tr>` : '');
   }
   return t + '</tbody></table>';
@@ -373,9 +383,12 @@ function viewHome() {
   const upcoming = db.usage.filter((u) => u.planned && itemById(u.itemId)?.type === type).sort((a, b) => a.date.localeCompare(b.date));
   if (upcoming.length) {
     const due = upcoming.filter((u) => u.date <= todayStr()).length;
-    h += `<div class="section-t">착용예정${due ? ` <span class="badge b-plan">확인 필요 ${due}건 · 눌러서 확정/변경/삭제</span>` : ''}</div><div class="card">` + upcoming.map((u) => {
+    h += `<div class="section-t">착용예정${due ? ` <span class="badge b-plan">확인 필요 ${due}건 · 눌러서 의류 화면에서 확정</span>` : ''}</div><div class="card">` + upcoming.map((u) => {
       const it = itemById(u.itemId);
-      return `<div class="list-date" data-pu="${u.id}" style="cursor:pointer">${chip(it, 'sm')}<span class="grow">${itemTitle(it)}<div class="muted">${specLine(it)}</div></span><span class="badge b-plan">${md(u.date)} (${weekday(u.date)})${u.date < todayStr() ? ' 지남' : u.date === todayStr() ? ' 오늘' : ''}</span></div>`;
+      // 한 줄: 색 상자 · Brand · Type · Pad · Hood · Length · Fit · Pocket · Material(들어가는 만큼, 넘치면 …) · 사용횟수/목표 · 날짜.
+      // 색상 글자는 넣지 않음(색 상자로 봄). 누르면 의류 화면(거기서 빨간 예정일을 눌러 확정)
+      const spec = [it.kind, it.pad, it.hood, it.length, it.fit, it.pocket, it.material].filter(Boolean).map(esc).join(' · ');
+      return `<a class="list-date plan1" href="#/item/${it.id}">${chip(it, 'sm')}<span class="grow ell"><b>${esc(it.brand)}</b>${spec ? ' · ' + spec : ''}</span><span class="pc">${itemStats(db, it).cur}/${it.tg}</span><span class="badge b-plan">${md(u.date)} (${weekday(u.date)})${u.date < todayStr() ? ' 지남' : u.date === todayStr() ? ' 오늘' : ''}</span></a>`;
     }).join('') + `</div>`;
   }
 
@@ -391,7 +404,7 @@ function viewHome() {
       const st = groupStats(db, items);
       h += `<div class="gcard" data-g="${g.id}">
         <div class="row"><span class="name grow">${esc(g.name)}</span><span class="muted">${tempLabel(g)} · ${st.n}벌 ›</span></div>
-        <div class="boxes">${items.map((it) => `<i style="${chipStyle(it)}" title="${esc(it.brand + ' ' + it.color)}"></i>`).join('')}</div>
+        <div class="boxes">${items.map((it) => `<i class="shp-${shapeOf(it)}" style="${chipStyle(it)}" title="${esc(it.brand + ' ' + it.color)}"></i>`).join('')}</div>
         ${usageBar(st, prog?.ratio, groupDates(items))}
       </div>`;
     }
@@ -479,7 +492,7 @@ function viewGroup(gid) {
   const today = todayStr();
 
   let h = `<div class="card">
-      <div class="boxes">${all.map((it) => `<i style="${chipStyle(it)}"></i>`).join('')}</div>
+      <div class="boxes">${all.map((it) => `<i class="shp-${shapeOf(it)}" style="${chipStyle(it)}"></i>`).join('')}</div>
       ${usageBar(st, prog?.ratio, groupDates(all))}
     </div>
     <div class="tabs">` + (editing
@@ -576,10 +589,10 @@ function viewItem(id) {
     ${pastSeasonsHtml(it)}
     <div class="card">
       <div class="row" style="margin-bottom:8px"><div class="title grow">상세 정보</div><button class="btn sm" id="editBtn">수정</button></div>
-      <dl class="kv">
+      <dl class="kv kv2">
         ${f('그룹', g?.name)}${f('Brand', it.brand)}${f('색상', it.color)}${f('Yr', yr2(it.yr))}${f('NX', it.nx === 'Ex' ? 'Ex (처분예정)' : it.nx)}
         ${f('Tg N.', it.tg)}${f('Hood', it.hood)}${f('Length', it.length)}${f('Fit', it.fit)}${f('Pad', it.pad)}
-        ${f('Pocket', it.pocket)}${f('소재', it.material)}${f('종류', it.kind)}${f('상태', it.active ? '활성' : '비활성')}${f('메모', it.memo)}${f('ID', it.id)}
+        ${f('Pocket', it.pocket)}${f('소재', it.material)}${f('종류', it.kind)}${f('상태', it.active ? '활성' : '비활성')}${f('ID', it.id)}${it.memo ? `<dt>메모</dt><dd class="wide">${esc(it.memo)}</dd>` : ''}
       </dl>
     </div>`;
   $app.innerHTML = h;
@@ -937,6 +950,7 @@ function importXlsx() {
       if (!confirm(`${file.name}\n의류 ${nd.items.length}벌, 사용기록 ${nd.usage.length}건\n현재 데이터를 이 파일로 교체할까요?`)) return;
       nd.viewType = db.viewType;
       nd.meta.lastBackup = db.meta.lastBackup;
+      normalizeGroups(nd); // 예전 엑셀의 줄임말 그룹명도 원어로
       db = nd;
       if (finals.length) { const keep = loadSnaps().filter((x) => !finals.some((f) => f.id === x.id)); saveSnaps([...keep, ...finals]); }
       seededNow = false;

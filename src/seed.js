@@ -1,12 +1,12 @@
 // 초기 데이터 (출력물 사진 기준, 2026-11-04)
 // 의류 행: [NX, Yr, Brand, Color, Hood, Length, Fit, Pad, Pocket, 소재, 종류, Tg, 사용일(뒤에 * = 착용예정), 비활성]
 const SEED_GROUPS = [
-  { id: 'G1', name: 'Extra-Hv', temp: '-20 ~ -6℃' },
-  { id: 'G2', name: 'Hv-Wt', temp: '-9 ~ 0℃' },
-  { id: 'G3', name: 'Mid-Wt', temp: '-5 ~ 4℃' },
-  { id: 'G4', name: 'Wt.Qlt.Lt', temp: '-1 ~ 8℃' },
+  { id: 'G1', name: 'Extra Heavy Weight', temp: '-20 ~ -6℃' },
+  { id: 'G2', name: 'Heavy Weight', temp: '-9 ~ 0℃' },
+  { id: 'G3', name: 'Mid Weight', temp: '-5 ~ 4℃' },
+  { id: 'G4', name: 'Waterproof/Quilted/Light Weight', temp: '-1 ~ 8℃' },
   { id: 'G5', name: 'Suit/Coat', temp: '-3 ~ 6℃' },
-  { id: 'G6', name: 'Trch', temp: '5 ~ 14℃' },
+  { id: 'G6', name: 'Trench Coat', temp: '5 ~ 14℃' },
 ];
 
 const SEED_ITEMS = {
@@ -133,4 +133,68 @@ function buildSeedDB() {
   return db;
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSeedDB };
+// ---------- SS: 출력물 사진 기준 (2026-11-05). SS 2026 = 종료된 시즌(사용일 포함), SS 2027 = 준비중 ----------
+// 올해 비활성이던 6벌은 사용자 요청으로 넣지 않음.
+// 의류 행: [NX, Yr, Brand, Color, Hood, Length, Fit, Pad, Pocket, 소재, 종류, Tg, 사용일(2026)] + 다음 시즌 { tg, order, nx }
+const SEED_SS_GROUPS = [
+  { key: 'Summer', temp: '20 ~ 34℃' },
+  { key: 'Spring', temp: '14 ~ 28℃' },
+  { key: 'Jacket', temp: '14 ~ 28℃' },
+];
+const SEED_SS_ITEMS = {
+  Summer: [
+    [['', 23, 'Barbour', 'Black', 'Hdn hood', '', '', '', '2', 'Thin', 'safary', 3, ['6/1', '6/2', '6/3']], { tg: 3, order: 1, nx: '' }],
+    [['', 24, 'Stone Island', 'Black', 'shirt collar', '', '', '', '2', 'Thin', 'safary', 3, ['5/20', '6/11', '6/16']], { tg: 3, order: 2, nx: '' }],
+  ],
+  Spring: [
+    [['New', 26, 'Barbour', 'Mint', 'cordu collar', 'medium-length', '', '', '2', '', 'Chore Jckt', 3, ['9/6', '9/12', '9/13']], { tg: 3, order: 4, nx: 'New' }],
+    [['New', 26, 'Muji', 'Black', 'cordu collar', 'medium-length', '', '', '2', 'waterproof', 'Chore Jckt', 3, ['4/26', '4/28', '4/29', '4/30']], { tg: 3, order: 6, nx: 'New' }],
+    [['New', 26, 'Zegna', 'Black', 'hood', 'medium-length', '', '', '2', 'pleated', 'Blouson', 2, ['9/22', '9/25', '9/28']], { tg: 3, order: 2, nx: 'New' }],
+    [['', 20, 'Wallass Barnes', 'Green', 'hood', 'medium-length', '', '', '4', '', 'jumper', 2, ['8/16', '9/2']], { tg: 2, order: 7, nx: 'Ex' }],
+    [['New', 25, 'Barbour', 'Green', 'hood', 'medium-length', '', '', '4', '', 'jumper', 3, ['5/7', '5/9', '5/10']], { tg: 3, order: 8, nx: '' }],
+    [['New', 25, 'Huit8', 'Black', 'hood', 'medium-length', '', '', '2', 'waterproof', 'jumper', 3, ['4/19', '4/20', '4/22']], { tg: 3, order: 5, nx: '' }],
+    [['New', 26, 'Zegna', 'Navy', 'hood', 'Short-length', 'Overfit', '', '2', 'waterproof', 'jumper', 2, ['9/29', '9/30']], { tg: 3, order: 1, nx: 'New' }],
+    [['New', 24, 'LuLu', 'Beige', 'hood', '', '', '', '3', 'waterproof', 'jumper', 5, ['5/2', '5/3', '5/5', '5/6', '9/8']], { tg: 4, order: 3, nx: '' }],
+  ],
+  Jacket: [
+    [['', 22, 'Emporio Armani', 'Dark Green', 'hood', 'medium-length', '', '', '2', 'Thin', 'Blazer', 3, ['5/26', '6/5', '6/7']], { tg: 3, order: 1, nx: '' }],
+    [['', 22, 'Peuterey', 'Beige Grey', '', 'medium-length', '', '', '2', '', 'Blazer', 3, ['5/15', '5/19', '9/3']], { tg: 3, order: 2, nx: '' }],
+  ],
+};
+const SEED_SS_COLORS = { 'Mint': '#a9dcd0', 'Dark Green': '#2f4f3a', 'Beige Grey': '#bdb6a6' };
+
+// 기존 db에 SS 2026(종료)·SS 2027(준비중)을 덧붙임. ID는 기존 것 뒤에 이어서.
+// onEnded: SS 2026 값이 들어간 상태에서 호출(최종본 저장용). 그 뒤 의류 목표·순서·NX를 SS 2027 값으로 바꿈
+function addSeedSS(db, onEnded) {
+  const next = (prefix, arr, len) => { let n = Math.max(0, ...arr.map((x) => Number(String(x.id).slice(prefix.length)) || 0)); return () => prefix + String(++n).padStart(len, '0'); };
+  const gId = next('G', db.groups, 1), cId = next('C', db.items, 3), uId = next('U', db.usage, 4);
+  for (const s of [
+    { id: 'SS2026', type: 'SS', name: 'SS 2026', start: '2026-05-01', end: '2026-09-30', status: 'ended' },
+    { id: 'SS2027', type: 'SS', name: 'SS 2027', start: '2027-05-01', end: '2027-09-30', status: 'ready' },
+  ]) if (!db.seasons.some((x) => x.id === s.id)) db.seasons.push(s);
+  for (const [name, hex] of Object.entries(SEED_SS_COLORS)) if (!db.colors.some((c) => c.name === name)) db.colors.push({ name, hex });
+  const nexts = [];
+  for (const [gi, g] of SEED_SS_GROUPS.entries()) {
+    const groupId = gId();
+    db.groups.push({ id: groupId, type: 'SS', name: g.key, temp: g.temp, order: gi + 1 });
+    for (const [i, [r, nx]] of SEED_SS_ITEMS[g.key].entries()) {
+      const id = cId();
+      const it = {
+        id, type: 'SS', groupId, order: i + 1, active: true, tg: r[11],
+        nx: r[0], yr: r[1], brand: r[2], color: r[3], hood: r[4], length: r[5],
+        fit: r[6], pad: r[7], pocket: r[8], material: r[9], kind: r[10], memo: '',
+      };
+      db.items.push(it);
+      nexts.push([it, nx]);
+      for (const d of r[12]) {
+        const [m, day] = d.split('/').map(Number);
+        db.usage.push({ id: uId(), date: `2026-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`, itemId: id, seasonId: 'SS2026', planned: false, memo: '' });
+      }
+    }
+  }
+  (typeof normalizeTerms === 'function' ? normalizeTerms : require('./core.js').normalizeTerms)(db);
+  if (onEnded) onEnded();
+  for (const [it, nx] of nexts) Object.assign(it, nx);
+}
+
+if (typeof module !== 'undefined') module.exports = { buildSeedDB, addSeedSS };

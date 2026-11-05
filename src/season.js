@@ -234,9 +234,10 @@ function startSeason(sid) {
   const items = db.items.filter((i) => i.type === type).sort((a, b) => (groupById(a.groupId)?.order - groupById(b.groupId)?.order) || a.order - b.order);
   const prev = finalsOf(type)[0];
   const prevCnt = (id) => (prev ? prev.data.usage.filter((u) => u.itemId === id && !u.planned && u.seasonId === prev.seasonId).length : null);
-  const defAct = (it) => (!it.active || it.nx === 'Ex' ? 'off' : 'keep');
+  // 기본값은 지금 상태 그대로. 처분예정(Ex)은 활성이며 비활성은 사용자가 직접만 바꿈
+  const defAct = (it) => (it.active ? 'keep' : 'off');
   modal(`<h2>${esc(s.name)} 시작 · 목록 정리</h2>
-    <div class="muted" style="margin-bottom:8px">${prev ? `지난 시즌(${esc(prev.seasonName)}) 결과를 보고 옷마다 정하세요.` : '옷마다 정하세요.'} 처분예정(Ex)과 비활성 옷은 기본 '비활성'입니다. New 표시는 지워집니다.</div>
+    <div class="muted" style="margin-bottom:8px">${prev ? `지난 시즌(${esc(prev.seasonName)}) 결과를 보고 옷마다 정하세요.` : '옷마다 정하세요.'} 기본값은 지금 상태 그대로입니다(처분예정도 '유지'). 비활성으로 바꿀 옷만 직접 고르세요. New 표시는 산 해와 다음 해까지만 남고, 그보다 오래된 옷은 지워집니다.</div>
     <form id="f"><div class="tblwrap" style="max-height:55vh;overflow:auto"><table class="sheet stbl" style="font-size:12px"><thead><tr><th>의류</th><th>지난</th><th>목표</th><th>처리</th></tr></thead><tbody>
     ${items.map((it) => { const c = prevCnt(it.id); return `<tr><td>${chip(it, 'sm')} <b>${esc(it.brand)}</b> ${esc(it.color)} · ${esc(it.kind)}${it.nx === 'Ex' ? ' <span class="badge b-ex">Ex</span>' : ''}</td>
       <td class="num">${c == null ? '-' : `${c}/${it.tg}`}</td>
@@ -257,8 +258,10 @@ function startSeason(sid) {
         it.tg = Number(v['tg_' + it.id]) || 0;
         if (a === 'off') it.active = false;
         if (a === 'keep') it.active = true;
-        if (it.nx === 'New') it.nx = '';
       }
+      // New는 산 해와 다음 해까지 (예: SS 2027 시작 → 26·27년 산만 New 유지)
+      const sy = Number(s.start.slice(2, 4));
+      for (const it of items) if (it.nx === 'New' && Number(it.yr) < sy - 1) it.nx = '';
       const delIds = new Set(del.map((i) => i.id));
       db.items = db.items.filter((i) => !delIds.has(i.id));
       db.usage = db.usage.filter((u) => !delIds.has(u.itemId));

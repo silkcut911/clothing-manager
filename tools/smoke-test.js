@@ -42,6 +42,16 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   }
   check('384px에서 그룹 표가 화면 폭 안', fits.every(Boolean), JSON.stringify(fits));
 
+  // 2-1. SS 추가 데이터: SS 2026 종료(최종본) + SS 2027 준비중, 12벌
+  const ss = await page.evaluate(() => {
+    const items = db.items.filter((i) => i.type === 'SS');
+    const real = db.usage.filter((u) => u.seasonId === 'SS2026' && !u.planned).length;
+    const fin = finalsOf('SS')[0];
+    return { n: items.length, tg27: items.reduce((a, i) => a + i.tg, 0), real, s26: seasonById('SS2026')?.status, s27: seasonById('SS2027')?.status,
+      finTg: fin && fin.data.items.reduce((a, i) => a + i.tg, 0), groups: db.groups.filter((g) => g.type === 'SS').length };
+  });
+  check('SS 2026·2027 추가', JSON.stringify(ss) === JSON.stringify({ n: 12, tg27: 36, real: 37, s26: 'ended', s27: 'ready', finTg: 35, groups: 3 }), JSON.stringify(ss));
+
   // 3. 표기 규칙
   const terms = await page.evaluate(() => [normalizeTerm('hood', 'hidden hood'), normalizeTerm('brand', 'Emporio Armani'), normalizeTerm('pocket', '2 Flap + 2 Zip'), normalizeTerm('pad', 'cross quilt'), normalizeYr(2023)]);
   check('표기 규칙', JSON.stringify(terms) === JSON.stringify(['Hdn Hood', 'Emporio A.', '2F+2Z', 'Cross Qlt', 23]), JSON.stringify(terms));
@@ -73,10 +83,15 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   check('시즌 종료 → 최종본 + 잠김', ended.cur === null && ended.finals === 1 && ended.locked, JSON.stringify(ended));
   check('진행중 시즌 없으면 기록 막힘', await page.evaluate(() => addUsage('C002', todayStr()) === null));
   await page.goto(URL + '#/settings'); await wait(200);
+  const before = await page.evaluate(() => JSON.stringify(db.items.filter((i) => i.type === 'FW').map((i) => [i.id, i.active])));
   await click('[data-sstart]'); await wait(200);
   await click('#f button.pri'); await wait(300);
-  const started = await page.evaluate(() => ({ cur: !!db.currentSeason.FW, ex: db.items.filter((i) => i.nx === 'Ex').every((i) => !i.active), news: db.items.filter((i) => i.nx === 'New').length }));
-  check('새 시즌 시작 (Ex 비활성, New 해제)', started.cur && started.ex && started.news === 0, JSON.stringify(started));
+  const started = await page.evaluate((b) => {
+    const sy = Number(seasonById(db.currentSeason.FW).start.slice(2, 4));
+    const fw = db.items.filter((i) => i.type === 'FW');
+    return { cur: !!db.currentSeason.FW, sameActive: JSON.stringify(fw.map((i) => [i.id, i.active])) === b, exActive: fw.some((i) => i.nx === 'Ex' && i.active), oldNew: fw.filter((i) => i.nx === 'New' && i.yr < sy - 1).length };
+  }, before);
+  check('새 시즌 시작 (활성/비활성 그대로·Ex도 활성, New는 산 해와 다음 해까지)', started.cur && started.sameActive && started.exActive && started.oldNew === 0, JSON.stringify(started));
   const fid = await page.evaluate(() => finalsOf('FW')[0].id);
   await page.goto(URL + '#/past/' + fid); await wait(300);
   check('지난 시즌 보기 (읽기 전용)', await page.evaluate(() => document.querySelectorAll('table.ctbl tr.r1').length > 0 && !document.querySelector('[data-pu]')));

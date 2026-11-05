@@ -16,10 +16,16 @@ function normalizeSeasons(db) {
 }
 
 // 그룹 기온: 최저/최고 두 칸 → 한 칸(기온 · 추천월 자유 입력)
+// 예전 줄임말 그룹명 → 원어 (이름이 정확히 같을 때만, 사용자 결정 2026-11-05)
+const GROUP_NAMES = {
+  'Extra-Hv': 'Extra Heavy Weight', 'Hv-Wt': 'Heavy Weight', 'Mid-Wt': 'Mid Weight',
+  'Wt.Qlt.Lt': 'Waterproof/Quilted/Light Weight', 'Trch': 'Trench Coat',
+};
 function normalizeGroups(db) {
   for (const g of db.groups) {
     if (g.temp == null) g.temp = g.tmin != null && g.tmin !== '' ? `${g.tmin} ~ ${g.tmax}℃` : '';
     delete g.tmin; delete g.tmax;
+    if (GROUP_NAMES[g.name]) g.name = GROUP_NAMES[g.name];
   }
 }
 
