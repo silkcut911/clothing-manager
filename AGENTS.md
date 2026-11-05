@@ -65,7 +65,7 @@ db 구조:
   items: [{ id:'C001', type, groupId, order, active, tg, nx: ''|'New'|'Ex', yr /* 2자리 숫자 */,
             brand, color, hood, length, fit, pad, pocket, material, kind, memo }],
   usage: [{ id:'U0001', date:'YYYY-MM-DD', itemId, seasonId, planned: bool, memo }],
-  meta: { lastBackup, updated, editDay /* 마지막으로 고친 날 */, fix1005, ss2026 /* SS 추가 완료 */ }
+  meta: { lastBackup, updated, editDay /* 마지막으로 고친 날 */, lastExportName /* 마지막 최신본 파일 이름 */, fix1005, ss2026 /* SS 추가 완료 */ }
 }
 ```
 - 화면 칸 이름과 필드 대응: Material = `material`(소재), Type = `kind`(종류), Dates = 사용일.
@@ -170,4 +170,5 @@ node tools/smoke-test.js     # puppeteer-core와 Chrome 필요 (파일 첫 부�
   - 최신본 파일 이름, 지난 시즌 기록 수정이 최종본에 반영되는지, 5년 보관 정리
   - 이전본 되돌리기
   - 엑셀로 저장했다가 불러와도 같은지
-- **아직 확인 못 한 것**: 실제 안드로이드 기기에서 `file://`로 열었을 때 localStorage가 유지되는지. 문제가 생기면 GitHub Pages 배포를 대안으로 검토합니다.
+- 실제 폰(갤럭시 S25)에서는 **GitHub Pages 웹 주소**로 열기·자동저장·엑셀 저장을 확인했습니다(2026-11-05). `file://`로 열었을 때 localStorage가 유지되는지는 확인하지 않았으므로, 폰에서는 웹 주소를 쓰도록 안내합니다.
+- push 뒤에는 GitHub Actions 결과(빌드·테스트·배포)가 성공인지 확인합니다.
