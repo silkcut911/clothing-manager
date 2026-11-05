@@ -92,7 +92,9 @@ function seasonSectionHtml(type) {
   };
   const ids = new Set(db.items.filter((i) => i.type === type).map((i) => i.id));
   const orphan = db.usage.filter((u) => ids.has(u.itemId) && !u.seasonId).sort((a, b) => a.date.localeCompare(b.date));
-  const orphanHtml = orphan.length ? `<div class="banner" style="margin:0 0 8px">시즌이 없는 사용일 <b>${orphan.length}건</b>: ${[...new Set(orphan.map((u) => u.date))].slice(0, 8).join(', ')}${orphan.length > 8 ? ' …' : ''}<br>그 기간의 시즌을 만들면 자동으로 들어갑니다.</div>` : '';
+  // 시즌이 없는 사용일: 옷 이름과 함께, 누르면 그 옷의 의류 상세(거기서 날짜·삭제)
+  const orphanHtml = orphan.length ? `<div class="banner" style="margin:0 0 8px">시즌이 없는 사용일 <b>${orphan.length}건</b> · 그 기간의 시즌을 만들면 자동으로 들어갑니다. 눌러서 의류 상세에서 고칠 수 있습니다.` +
+    orphan.map((u) => { const it = itemById(u.itemId); return `<a class="list-date" href="#/item/${it.id}" style="color:inherit;text-decoration:none;padding:6px 0">${chip(it, 'sm')}<span class="grow">${u.date}${u.planned ? ' (예정)' : ''} · <b>${esc(it.brand)}</b> ${esc(it.color)} ${esc(it.kind)}</span>›</a>`; }).join('') + `</div>` : '';
   return `<div class="section-t">${type} 시즌</div><div class="card">${orphanHtml}${list.map(row).join('') || `<div class="muted">${type} 시즌이 없습니다.</div>`}
     <button class="btn block" id="sAdd" style="margin-top:8px">+ 새 시즌 만들기</button>
     <div class="muted" style="margin-top:6px">새 시즌은 미리 만들어 둘 수 있습니다(준비중). 진행중 시즌을 직접 종료하면 최종본이 저장되고, 전체 데이터를 엑셀(시즌최종본)로도 받을 수 있습니다. 그다음 준비중 시즌을 시작하세요. 날짜가 지나도 자동으로 바뀌지 않습니다. 사용일은 날짜로 시즌이 정해집니다(${type} ${WINDOW_TEXT[type]}).</div></div>`;
