@@ -1,0 +1,426 @@
+// 시즌 관리(만들기 → 진행 → 종료), 백업본·최종본, 지난 시즌 보기, 작년 오늘
+// FW와 SS는 각각 따로 저장·복원·종료한다
+
+// ---------- 백업본 · 최종본 (브라우저에 따로 보관) ----------
+const SNAP_KEY = 'clothes-snaps-v1';
+function loadSnaps() {
+  try { return JSON.parse(localStorage.getItem(SNAP_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveSnaps(list) {
+  try { localStorage.setItem(SNAP_KEY, JSON.stringify(list)); return true; }
+  catch (e) { alert('저장 공간이 부족해 백업본을 저장하지 못했습니다. 오래된 백업본을 지우거나 엑셀로 백업하세요.'); return false; }
+}
+const seasonById = (id) => db.seasons.find((s) => s.id === id);
+// 종료된 시즌의 실제 기록은 잠김 (예정일은 다음 시즌으로 넘어갈 수 있어 잠그지 않음)
+const isLocked = (u) => !u.planned && seasonById(u.seasonId)?.status === 'ended';
+// 최종본: 그 구분의 종료된 시즌들, 최근 시즌부터
+const finalsOf = (type) => loadSnaps().filter((x) => x.type === type && x.kind === 'final').sort((a, b) => (b.seasonStart || '').localeCompare(a.seasonStart || ''));
+const savesOf = (type) => loadSnaps().filter((x) => x.type === type && x.kind === 'save').sort((a, b) => b.created.localeCompare(a.created));
+
+// 한 구분(FW/SS)의 데이터만 떼어 냄. cut 이면 실제 기록은 기준일까지, 예정일은 날짜와 상관없이 예정 그대로
+function typeData(type, { baseDate = todayStr(), cut = false } = {}) {
+  const items = db.items.filter((i) => i.type === type);
+  const ids = new Set(items.map((i) => i.id));
+  return {
+    seasons: db.seasons.filter((s) => s.type === type),
+    groups: db.groups.filter((g) => g.type === type),
+    items,
+    usage: db.usage.filter((u) => ids.has(u.itemId) && (u.planned || !cut || u.date <= baseDate)),
+    colors: db.colors,
+    currentSeason: db.currentSeason[type],
+  };
+}
+function makeSnap(type, kind, { name = '', baseDate = todayStr(), cut = false, seasonId = db.currentSeason[type] } = {}) {
+  const s = seasonById(seasonId);
+  return {
+    id: 'S' + Date.now() + Math.random().toString(36).slice(2, 5),
+    type, kind, name, baseDate, cut, seasonId,
+    seasonName: s?.name || '', seasonStart: s?.start || '',
+    created: new Date().toISOString(),
+    data: JSON.parse(JSON.stringify(typeData(type, { baseDate, cut }))),
+  };
+}
+function addSnap(snap) { return saveSnaps([...loadSnaps(), snap]); }
+
+// 백업본을 앱 전체 구조로 (엑셀 내보내기, 지난 시즌 보기용)
+function snapDb(snap) {
+  const d = snap.data;
+  return {
+    version: 1, seasons: d.seasons, currentSeason: { FW: null, SS: null, [snap.type]: snap.kind === 'final' ? snap.seasonId : d.currentSeason },
+    viewType: snap.type, groups: d.groups, colors: d.colors, items: d.items, usage: d.usage, terms: db.terms, meta: { lastBackup: null, updated: snap.created },
+  };
+}
+function exportSnap(snap) {
+  const label = snap.kind === 'final' ? `최종_${snap.seasonName.replace(/\s+/g, '')}` : `저장_${snap.baseDate.replace(/-/g, '')}`;
+  XLSX.writeFile(dbToWorkbook(XLSX, snapDb(snap)), `의류관리_${snap.type}_${label}.xlsx`);
+  toast('엑셀 저장됨 (다운로드 폴더)');
+}
+// 복원: 그 구분의 그룹·의류·사용기록만 바꿈. 시즌 정보와 종료된 시즌의 기록은 지금 것을 유지
+function restoreSnap(snap) {
+  const type = snap.type;
+  if (!confirm(`${type} 데이터를 '${snap.name || snap.baseDate}' 백업본으로 바꿀까요?\n바꾸기 전 지금 상태는 '복원 전 자동' 백업본으로 남깁니다.`)) return;
+  addSnap(makeSnap(type, 'save', { name: '복원 전 자동' }));
+  const d = JSON.parse(JSON.stringify(snap.data));
+  const ids = new Set(d.items.map((i) => i.id));
+  const locked = db.usage.filter((u) => itemById(u.itemId)?.type === type && isLocked(u) && ids.has(u.itemId));
+  const fromSnap = d.usage.filter((u) => !(seasonById(u.seasonId)?.status === 'ended' && !u.planned));
+  fromSnap.forEach((u) => { if (u.planned && db.currentSeason[type]) u.seasonId = db.currentSeason[type]; }); // 예정일은 지금 진행중 시즌으로
+  const otherIds = new Set(db.items.filter((i) => i.type !== type).map((i) => i.id));
+  db.groups = [...db.groups.filter((g) => g.type !== type), ...d.groups];
+  db.items = [...db.items.filter((i) => i.type !== type), ...d.items];
+  db.usage = [...db.usage.filter((u) => otherIds.has(u.itemId)), ...locked, ...fromSnap];
+  for (const c of d.colors) if (!db.colors.find((x) => x.name === c.name)) db.colors.push(c);
+  normalizeOrder(db);
+  save(); toast('복원 완료'); render();
+}
+
+// ---------- 설정: 시즌 칸 ----------
+function seasonSectionHtml(type) {
+  const list = db.seasons.filter((s) => s.type === type);
+  const rank = { active: 0, ready: 1, ended: 2 };
+  list.sort((a, b) => rank[a.status] - rank[b.status] || b.start.localeCompare(a.start));
+  const finals = finalsOf(type);
+  const row = (s) => {
+    const fin = finals.find((f) => f.seasonId === s.id);
+    const btns = s.status === 'active'
+      ? `<button class="btn sm" data-se="${s.id}">기간 수정</button><button class="btn sm danger" data-send="${s.id}">이번 시즌 종료</button>`
+      : s.status === 'ready'
+        ? `<button class="btn sm" data-se="${s.id}">기간 수정</button><button class="btn sm pri" data-sstart="${s.id}">시즌 시작</button><button class="btn sm danger" data-sdel="${s.id}">삭제</button>`
+        : fin ? `<button class="btn sm" onclick="go('#/past/${fin.id}')">보기</button><button class="btn sm" data-fx="${fin.id}">엑셀</button>` : '<span class="muted">최종본 없음</span>';
+    return `<div class="list-date" style="flex-wrap:wrap"><span style="flex:1 1 100%"><span class="badge ${s.status === 'active' ? 'b-new' : s.status === 'ready' ? 'b-plan' : 'b-off'}" style="margin:0 6px 0 0">${SEASON_STATUS[s.status]}</span><b>${esc(s.name)}</b>
+      <div class="muted">${s.start} ~ ${s.end}${s.status === 'ended' ? ' · 잠김' : ''}</div></span><span class="row" style="gap:4px;margin-left:auto">${btns}</span></div>`;
+  };
+  return `<div class="section-t">${type} 시즌</div><div class="card">${list.map(row).join('') || `<div class="muted">${type} 시즌이 없습니다.</div>`}
+    <button class="btn block" id="sAdd" style="margin-top:8px">+ 새 시즌 만들기</button>
+    <div class="muted" style="margin-top:6px">새 시즌은 미리 만들어 둘 수 있습니다(준비중). 진행중 시즌을 직접 종료하면 최종본이 저장되고 잠깁니다. 그다음 준비중 시즌을 시작하세요. 날짜가 지나도 자동으로 바뀌지 않습니다.</div></div>`;
+}
+function saveSectionHtml(type) {
+  const list = savesOf(type);
+  return `<div class="section-t">${type} 백업본</div><div class="card">
+    <button class="btn pri block" id="snapAdd">+ 백업본 저장</button>
+    ${list.map((x) => `<div class="list-date"><span class="grow"><b>${esc(x.name || '백업본')}</b>
+      <div class="muted">기준일 ${x.baseDate}${x.cut ? ' (기준일까지 + 예정일)' : ''} · ${esc(x.seasonName)} · ${x.created.slice(0, 16).replace('T', ' ')}</div></span>
+      <button class="btn sm" data-sr="${x.id}">복원</button><button class="btn sm" data-fx="${x.id}">엑셀</button><button class="btn sm danger" data-sd="${x.id}">삭제</button></div>`).join('') || '<div class="muted" style="margin-top:8px">백업본 없음</div>'}
+    <div class="muted" style="margin-top:6px">백업본은 이 폰의 브라우저에 보관됩니다. 바깥 보관은 위의 [엑셀로 저장]이나 [엑셀 공유]를 쓰세요.</div></div>`;
+}
+function bindSeasonSection(type) {
+  const snapBy = (id) => loadSnaps().find((x) => x.id === id);
+  document.getElementById('sAdd').onclick = () => editSeason(null, type);
+  $app.querySelectorAll('[data-se]').forEach((b) => (b.onclick = () => editSeason(b.dataset.se, type)));
+  $app.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => go('#/end/' + b.dataset.send)));
+  $app.querySelectorAll('[data-sstart]').forEach((b) => (b.onclick = () => startSeason(b.dataset.sstart)));
+  $app.querySelectorAll('[data-sdel]').forEach((b) => (b.onclick = () => {
+    const s = seasonById(b.dataset.sdel);
+    if (!confirm(`준비중인 ${s.name}을(를) 삭제할까요?`)) return;
+    db.seasons = db.seasons.filter((x) => x.id !== s.id); save(); render();
+  }));
+  $app.querySelectorAll('[data-fx]').forEach((b) => (b.onclick = () => exportSnap(snapBy(b.dataset.fx))));
+  $app.querySelectorAll('[data-sr]').forEach((b) => (b.onclick = () => restoreSnap(snapBy(b.dataset.sr))));
+  $app.querySelectorAll('[data-sd]').forEach((b) => (b.onclick = () => {
+    const x = snapBy(b.dataset.sd);
+    if (!confirm(`백업본 '${x.name || x.baseDate}'을(를) 삭제할까요?`)) return;
+    saveSnaps(loadSnaps().filter((y) => y.id !== x.id)); render();
+  }));
+  document.getElementById('snapAdd').onclick = () => askSnap(type);
+}
+
+// 백업본 저장 창: 이름, 기준일, 기준일까지만 담기
+function askSnap(type) {
+  modal(`<h2>${type} 백업본 저장</h2><form class="form" id="f">
+    <label>이름 (선택)</label><input name="name" placeholder="예: 11월 정리">
+    <label>기준일</label><input type="date" name="base" value="${todayStr()}" required>
+    <label class="row" style="gap:6px;margin-top:10px"><input type="checkbox" name="cut" style="width:auto"> 기준일까지의 실제 기록만 담기</label>
+    <div class="muted" style="margin-top:4px">예정일은 체크 여부와 상관없이 예정 그대로 모두 담깁니다.</div>
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button type="button" class="btn" id="cancel">취소</button><button class="btn pri">저장</button></div></form>`, (m, close) => {
+    const f = m.querySelector('#f');
+    m.querySelector('#cancel').onclick = close;
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      if (!f.base.value) return;
+      if (addSnap(makeSnap(type, 'save', { name: f.name.value.trim(), baseDate: f.base.value, cut: f.cut.checked }))) { close(); toast('백업본 저장됨'); render(); }
+    };
+  });
+}
+
+// 시즌 만들기/기간 수정 (만들면 '준비중')
+function editSeason(sid, type) {
+  const s = sid ? seasonById(sid) : null;
+  const last = db.seasons.filter((x) => x.type === type).sort((a, b) => b.start.localeCompare(a.start))[0];
+  const y = last ? Number(last.start.slice(0, 4)) + 1 : new Date().getFullYear();
+  const def = s || (type === 'FW' ? { name: `FW ${y}-${String(y + 1).slice(2)}`, start: `${y}-09-01`, end: `${y + 1}-04-30` } : { name: `SS ${y}`, start: `${y}-05-01`, end: `${y}-09-30` });
+  modal(`<h2>${s ? '시즌 기간 수정' : `${type} 새 시즌 만들기`}</h2><form class="form" id="f">
+    <label>이름</label><input name="name" value="${esc(def.name)}" required>
+    <div class="two"><div><label>시작일</label><input type="date" name="start" value="${def.start}" required></div><div><label>종료일</label><input type="date" name="end" value="${def.end}" required></div></div>
+    ${s ? '' : '<div class="muted" style="margin-top:6px">준비중으로 만들어집니다. 지금 시즌은 그대로 계속 쓰고, 나중에 [시즌 시작]을 누르면 시작됩니다.</div>'}
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button type="button" class="btn" id="cancel">취소</button><button class="btn pri">저장</button></div></form>`, (m, close) => {
+    const f = m.querySelector('#f');
+    m.querySelector('#cancel').onclick = close;
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const v = { name: f.name.value.trim(), start: f.start.value, end: f.end.value };
+      if (!v.name || v.start >= v.end) return alert('이름과 기간을 확인하세요.');
+      if (s) Object.assign(s, v);
+      else {
+        let id = `${type}${v.start.slice(0, 4)}`;
+        while (seasonById(id)) id += 'b';
+        db.seasons.push({ id, type, status: 'ready', ...v });
+      }
+      save(); close(); render();
+    };
+  });
+}
+
+// ---------- 시즌 종료: 검토 화면에서 확인·수정한 뒤 직접 종료 ----------
+function viewEnd(sid) {
+  const s = seasonById(sid);
+  if (!s || s.status !== 'active') return go('#/settings');
+  const type = s.type;
+  setTop({ title: `${s.name} 종료`, back: true });
+  setNav('settings');
+  const items = db.items.filter((i) => i.type === type);
+  const tot = groupStats(db, items);
+  const ids = new Set(items.map((i) => i.id));
+  const planned = db.usage.filter((u) => u.planned && ids.has(u.itemId)).sort((a, b) => a.date.localeCompare(b.date));
+  const due = planned.filter((u) => u.date <= todayStr());
+  let h = `<div class="card"><div class="title">${esc(s.name)} · ${s.start} ~ ${s.end}</div>
+      <div class="stat3" style="margin-top:10px">
+        <div><b>${tot.cur}<span class="muted">/${tot.tg}</span></b><span class="muted">사용 ${pct(tot.pct)}</span></div>
+        <div><b>${tot.ach}<span class="muted">/${tot.n}</span></b><span class="muted">목표달성</span></div>
+        <div><b>${planned.length}</b><span class="muted">예정</span></div>
+      </div>
+      <p class="muted" style="margin-top:10px">종료하면 지금 내용이 <b>${esc(s.name)} 최종본</b>으로 저장되고, 이 시즌의 사용기록은 잠겨서 고칠 수 없습니다. 종료 전에 아래 내용을 확인하고 필요하면 고치세요.</p></div>`;
+  if (due.length) {
+    h += `<div class="section-t">⚠ 확인 필요한 예정일 ${due.length}건 (누르면 확정·변경·삭제)</div><div class="card">` +
+      due.map((u) => { const it = itemById(u.itemId); return `<div class="list-date" data-pu="${u.id}" style="cursor:pointer">${chip(it, 'sm')}<span class="grow">${itemTitle(it)}</span><span class="badge b-plan">${md(u.date)} 지남</span></div>`; }).join('') +
+      `<div class="muted" style="margin-top:6px">날짜가 지난 예정일을 정리해야 종료할 수 있습니다.</div></div>`;
+  }
+  const future = planned.length - due.length;
+  if (future) h += `<div class="card muted">아직 오지 않은 예정일 ${future}건은 다음 시즌을 시작할 때 새 시즌으로 넘어갑니다.</div>`;
+  h += `<div class="section-t">전체 목록 (Dates 칸을 눌러 사용일 수정, 다른 칸은 의류 상세)</div>` + homeTable(typeGroups(type));
+  h += `<div class="card" style="margin-top:12px">
+      <label class="row" style="gap:8px"><input type="checkbox" id="endOk" style="width:auto"> 내용을 확인했고 ${esc(s.name)}을(를) 종료합니다</label>
+      <button class="btn danger block" id="endBtn" style="margin-top:10px" disabled>이번 시즌 종료하고 최종본 저장</button>
+      <a class="btn block" href="#/settings" style="margin-top:8px">아직 종료하지 않음</a></div>`;
+  $app.innerHTML = h;
+  $app.querySelectorAll('tr[data-i]').forEach((tr) => (tr.onclick = (e) => {
+    const dm = e.target.closest('[data-dm]');
+    dm ? manageDates(dm.dataset.dm) : go('#/item/' + tr.dataset.i);
+  }));
+  $app.querySelectorAll('[data-g]').forEach((b) => (b.onclick = () => go('#/group/' + b.dataset.g)));
+  const ok = document.getElementById('endOk'), btn = document.getElementById('endBtn');
+  ok.onchange = () => (btn.disabled = !ok.checked || due.length > 0);
+  btn.onclick = () => {
+    if (due.length) return alert('날짜가 지난 예정일을 먼저 정리하세요.');
+    if (!confirm(`${s.name}을(를) 종료할까요?\n종료 후에는 이 시즌의 기록을 고칠 수 없습니다.`)) return;
+    const snap = makeSnap(type, 'final', { name: `${s.name} 최종본`, seasonId: s.id });
+    if (!addSnap(snap)) return;
+    s.status = 'ended';
+    db.currentSeason[type] = null;
+    save();
+    if (confirm(`${s.name}을(를) 종료하고 최종본을 저장했습니다.\n최종본을 엑셀로도 받아 둘까요? (권장)`)) exportSnap(snap);
+    go('#/settings');
+  };
+}
+
+// ---------- 준비중 시즌 시작: 목록 정리(유지/비활성/제외, 새 목표) ----------
+function startSeason(sid) {
+  const s = seasonById(sid);
+  const type = s.type;
+  const act = db.seasons.find((x) => x.type === type && x.status === 'active');
+  if (act) {
+    if (confirm(`진행중인 ${act.name}을(를) 먼저 종료해야 합니다.\n종료 검토 화면으로 갈까요?`)) go('#/end/' + act.id);
+    return;
+  }
+  const items = db.items.filter((i) => i.type === type).sort((a, b) => (groupById(a.groupId)?.order - groupById(b.groupId)?.order) || a.order - b.order);
+  const prev = finalsOf(type)[0];
+  const prevCnt = (id) => (prev ? prev.data.usage.filter((u) => u.itemId === id && !u.planned && u.seasonId === prev.seasonId).length : null);
+  const defAct = (it) => (!it.active || it.nx === 'Ex' ? 'off' : 'keep');
+  modal(`<h2>${esc(s.name)} 시작 · 목록 정리</h2>
+    <div class="muted" style="margin-bottom:8px">${prev ? `지난 시즌(${esc(prev.seasonName)}) 결과를 보고 옷마다 정하세요.` : '옷마다 정하세요.'} 처분예정(Ex)과 비활성 옷은 기본 '비활성'입니다. New 표시는 지워집니다.</div>
+    <form id="f"><div class="tblwrap" style="max-height:55vh;overflow:auto"><table class="sheet stbl" style="font-size:12px"><thead><tr><th>의류</th><th>지난</th><th>목표</th><th>처리</th></tr></thead><tbody>
+    ${items.map((it) => { const c = prevCnt(it.id); return `<tr><td>${chip(it, 'sm')} <b>${esc(it.brand)}</b> ${esc(it.color)} · ${esc(it.kind)}${it.nx === 'Ex' ? ' <span class="badge b-ex">Ex</span>' : ''}</td>
+      <td class="num">${c == null ? '-' : `${c}/${it.tg}`}</td>
+      <td><input type="number" min="0" name="tg_${it.id}" value="${esc(it.tg)}" ></td>
+      <td><select name="act_${it.id}">${[['keep', '유지'], ['off', '비활성'], ['del', '제외']].map(([v, t]) => `<option value="${v}" ${defAct(it) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></td></tr>`; }).join('')}
+    </tbody></table></div>
+    <div class="muted" style="margin-top:6px">'제외'는 목록에서 삭제합니다. 지난 시즌 기록은 최종본에 남습니다.</div>
+    <div class="row" style="margin-top:12px"><span class="grow"></span><button type="button" class="btn" id="cancel">취소</button><button class="btn pri">${esc(s.name)} 시작</button></div></form>`, (m, close) => {
+    const f = m.querySelector('#f');
+    m.querySelector('#cancel').onclick = close;
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(new FormData(f));
+      const del = items.filter((it) => v['act_' + it.id] === 'del');
+      if (del.length && !confirm(`${del.length}벌을 목록에서 제외(삭제)합니다. 계속할까요?`)) return;
+      for (const it of items) {
+        const a = v['act_' + it.id];
+        it.tg = Number(v['tg_' + it.id]) || 0;
+        if (a === 'off') it.active = false;
+        if (a === 'keep') it.active = true;
+        if (it.nx === 'New') it.nx = '';
+      }
+      const delIds = new Set(del.map((i) => i.id));
+      db.items = db.items.filter((i) => !delIds.has(i.id));
+      db.usage = db.usage.filter((u) => !delIds.has(u.itemId));
+      normalizeOrder(db);
+      s.status = 'active';
+      db.currentSeason[type] = s.id;
+      // 아직 정리되지 않은 예정일은 새 시즌으로
+      db.usage.forEach((u) => { if (u.planned && itemById(u.itemId)?.type === type) u.seasonId = s.id; });
+      save(); close();
+      toast(`${s.name} 시작`);
+      go('#/');
+    };
+  });
+}
+
+// ---------- 지난 시즌 보기 (최종본, 읽기 전용) ----------
+function viewPast(snapId) {
+  const snap = loadSnaps().find((x) => x.id === snapId);
+  if (!snap) return go('#/settings');
+  setTop({ title: `${snap.seasonName} (지난 시즌)`, back: true });
+  setNav('home');
+  const live = db;
+  db = snapDb(snap); // 화면을 그리는 동안만 최종본 데이터로
+  let h;
+  try {
+    const items = db.items;
+    const tot = groupStats(db, items);
+    const s = db.seasons.find((x) => x.id === snap.seasonId) || {};
+    h = `<div class="banner">읽기 전용 · ${esc(snap.seasonName)} 최종본 (${snap.created.slice(0, 10)} 저장)</div>
+      <div class="card"><div class="title">${esc(snap.seasonName)}</div><div class="muted">${s.start || ''} ~ ${s.end || ''}</div>
+      <div class="stat3" style="margin-top:10px">
+        <div><b>${tot.cur}<span class="muted">/${tot.tg}</span></b><span class="muted">사용 ${pct(tot.pct)}</span></div>
+        <div><b>${tot.ach}<span class="muted">/${tot.n}</span></b><span class="muted">목표달성</span></div>
+        <div><b>${tot.n}</b><span class="muted">의류</span></div>
+      </div></div>`;
+    for (const g of [...db.groups].sort((a, b) => a.order - b.order)) {
+      const list = items.filter((i) => i.groupId === g.id).sort((a, b) => a.order - b.order);
+      if (!list.length) continue;
+      const st = groupStats(db, list);
+      h += `<div class="section-t">${esc(g.name)} <span class="muted">${tempLabel(g)} · ${st.cur}/${st.tg}회 · 달성 ${st.ach}/${st.n}</span></div><div class="clist">` +
+        itemTable(list, { headRight: '사용', right: (it) => { const x = itemStats(db, it); return `<div class="rtw"><div class="cnt${x.achieved ? ' ach' : ''}">${x.cur}<span class="muted">/${it.tg}</span></div></div>`; } }) + `</div>`;
+    }
+  } finally { db = live; }
+  $app.innerHTML = h + `<button class="btn block" id="pxBtn" style="margin-top:8px">이 최종본 엑셀로 받기</button>`;
+  $app.querySelectorAll('[data-pu]').forEach((e) => e.removeAttribute('data-pu')); // 읽기 전용
+  document.getElementById('pxBtn').onclick = () => exportSnap(snap);
+}
+
+// ---------- 의류 상세: 지난 시즌에 입은 날 ----------
+function pastSeasonsHtml(it) {
+  const ended = db.seasons.filter((s) => s.type === it.type && s.status === 'ended').sort((a, b) => b.start.localeCompare(a.start));
+  const rows = ended.map((s) => {
+    const list = db.usage.filter((u) => u.itemId === it.id && !u.planned && u.seasonId === s.id).sort((a, b) => a.date.localeCompare(b.date));
+    const fin = finalsOf(it.type).find((f) => f.seasonId === s.id);
+    const tg = fin?.data.items.find((x) => x.id === it.id)?.tg;
+    return `<div class="list-date"><span class="grow"><b>${esc(s.name)}</b> <span class="muted">${list.length}${tg != null ? '/' + tg : ''}회</span>
+      <div class="muted">${list.length ? shortDates(list) : '입은 날 없음'}</div></span></div>`;
+  });
+  return rows.length ? `<div class="card"><div class="title" style="margin-bottom:4px">지난 시즌</div>${rows.join('')}</div>` : '';
+}
+
+// ---------- 작년 오늘 / 작년 이날 ----------
+// 지금 데이터와 최종본의 실제 기록을 합쳐서 찾음 (목록에서 뺀 옷도 나옴). 그날 없으면 앞뒤 3일
+function lastYearWorn(date, type) {
+  const [y, m, d] = date.split('-').map(Number);
+  let target = `${y - 1}-${String(m).padStart(2, '0')}-${String(Math.min(d, m === 2 ? 28 : 31)).padStart(2, '0')}`;
+  const items = new Map(), recs = new Map();
+  for (const f of finalsOf(type)) {
+    f.data.items.forEach((i) => items.set(i.id, i));
+    f.data.usage.forEach((u) => { if (!u.planned) recs.set(u.id + u.date, u); });
+  }
+  db.items.filter((i) => i.type === type).forEach((i) => items.set(i.id, i));
+  db.usage.forEach((u) => { if (!u.planned && items.has(u.itemId)) recs.set(u.id + u.date, u); });
+  const all = [...recs.values()];
+  for (const off of [0, -1, 1, -2, 2, -3, 3]) {
+    const day = addDays(target, off);
+    const list = all.filter((u) => u.date === day && items.get(u.itemId)?.type === type);
+    if (list.length) return { day, off, list: list.map((u) => ({ u, it: items.get(u.itemId) })) };
+  }
+  return null;
+}
+function lastYearHtml(date, type, label) {
+  const r = lastYearWorn(date, type);
+  if (!r) return '';
+  const title = r.off === 0 ? `${label} (${r.day} ${weekday(r.day)})` : `${label} · 기록이 없어 가까운 날 ${md(r.day)} (${weekday(r.day)})`;
+  return `<div class="section-t">${title}</div><div class="card">` + r.list.map(({ it }) =>
+    `<${db.items.includes(it) ? `a href="#/item/${it.id}"` : 'div'} class="list-date" style="color:inherit;text-decoration:none">${chip(it, 'sm')}<span class="grow">${itemTitle(it)}<div class="muted">${specLine(it)}</div></span></${db.items.includes(it) ? 'a' : 'div'}>`).join('') + `</div>`;
+}
+
+// ---------- 전체 엑셀에 최종본 포함 (구분마다 최근 2개: 올 시즌·작년 시즌) ----------
+function addFinalsToWorkbook(wb) {
+  const finals = ['FW', 'SS'].flatMap((t) => finalsOf(t).slice(0, 2));
+  if (!finals.length) return;
+  const restore = [];
+  for (const f of finals) {
+    const sdb = snapDb(f);
+    const rows = sdb.items.map((it) => {
+      const st = itemStats(sdb, it);
+      return { '그룹': (sdb.groups.find((g) => g.id === it.groupId) || {}).name || '', 'Brand': it.brand, '색상': it.color, 'Pad': it.pad, 'Hood': it.hood, 'Type': it.kind, 'Pocket': it.pocket, 'Fit': it.fit, 'Material': it.material, 'Length': it.length, 'Tg': it.tg, 'Cur': st.cur, '사용일': st.used.map((u) => u.date.slice(5)).reverse().join(', ') };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, `${f.seasonName} 최종`.slice(0, 31));
+    const json = JSON.stringify(f);
+    for (let i = 0, k = 0; i < json.length; i += 30000, k++) restore.push({ 'ID': f.id, '조각': k, '데이터': json.slice(i, i + 30000) });
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(restore), '최종본(복원용)');
+}
+function readFinalsFromWorkbook(wb) {
+  const ws = wb.Sheets['최종본(복원용)'];
+  if (!ws) return [];
+  const parts = {};
+  for (const r of XLSX.utils.sheet_to_json(ws, { defval: '' })) (parts[r['ID']] ||= []).push(r);
+  return Object.values(parts).map((ps) => {
+    try { return JSON.parse(ps.sort((a, b) => a['조각'] - b['조각']).map((p) => p['데이터']).join('')); } catch (e) { return null; }
+  }).filter(Boolean);
+}
+
+// ---------- 이전본: 그날 처음 고치기 직전 상태(FW·SS 전체)를 자동 보관 → 잘못 고친 날 되돌리기 ----------
+const PREV_KEY = 'clothes-prev-v1';   // { day: 마지막으로 고친 날, savedAt, data } = 오늘 고치기 전 버전
+const UNDO_KEY = 'clothes-undo-v1';   // 되돌리기 직전의 오늘 버전 (다시 오늘 버전으로 돌아갈 때)
+const readVer = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+const writeVer = (k, v) => { try { v ? localStorage.setItem(k, JSON.stringify(v)) : localStorage.removeItem(k); } catch (e) { /* 공간 부족 시 이전본만 포기 */ } };
+// save() 직전에 호출: 마지막으로 고친 날이 오늘이 아니면, 그때까지의 상태를 이전본으로 남김
+function keepPrevVersion(lastJson) {
+  const today = todayStr();
+  if (!lastJson || db.meta.editDay === today) { db.meta.editDay = today; return; }
+  const last = JSON.parse(lastJson);
+  writeVer(PREV_KEY, { day: last.meta.editDay || (last.meta.updated || '').slice(0, 10), savedAt: last.meta.updated, data: last });
+  db.meta.editDay = today;
+}
+function versionSectionHtml() {
+  const prev = readVer(PREV_KEY), undo = readVer(UNDO_KEY);
+  const t = (iso) => (iso ? iso.slice(0, 16).replace('T', ' ') : '');
+  return `<div class="section-t">되돌리기 (FW·SS 전체)</div><div class="card">
+    <div class="list-date"><span class="grow"><b>현재본</b><div class="muted">고칠 때마다 자동 저장 · 최종 ${t(db.meta.updated)}</div></span></div>
+    <div class="list-date"><span class="grow"><b>이전본</b><div class="muted">${prev ? `${prev.day || ''} 까지의 상태 · ${t(prev.savedAt)}` : '아직 없음 (다른 날 처음 고칠 때 자동으로 생김)'}</div></span>${prev ? '<button class="btn sm" id="verPrev">이 버전으로 되돌리기</button>' : ''}</div>
+    ${undo ? `<div class="list-date"><span class="grow"><b>되돌리기 전 오늘본</b><div class="muted">${t(undo.savedAt)}</div></span><button class="btn sm pri" id="verUndo">오늘본으로 다시</button></div>` : ''}
+    <div class="muted" style="margin-top:6px">오늘 잘못 고쳤으면 이전본으로 되돌리세요. 되돌린 뒤에도 '오늘본으로 다시'로 돌아갈 수 있습니다. 백업본·시즌 최종본은 바뀌지 않습니다.</div></div>`;
+}
+function bindVersionSection() {
+  document.getElementById('verPrev')?.addEventListener('click', () => {
+    const prev = readVer(PREV_KEY);
+    if (!confirm(`현재본을 이전본(${prev.day} 까지의 상태)으로 되돌릴까요?\n오늘 고친 버전은 '되돌리기 전 오늘본'으로 남아 다시 돌아갈 수 있습니다.`)) return;
+    writeVer(UNDO_KEY, { savedAt: db.meta.updated, data: JSON.parse(JSON.stringify(db)) });
+    replaceDb(prev.data);
+    toast('이전본으로 되돌렸습니다');
+  });
+  document.getElementById('verUndo')?.addEventListener('click', () => {
+    const undo = readVer(UNDO_KEY);
+    if (!confirm('되돌리기 전의 오늘본으로 다시 바꿀까요?')) return;
+    writeVer(UNDO_KEY, null);
+    replaceDb(undo.data);
+    toast('오늘본으로 돌아왔습니다');
+  });
+}
+// 버전 교체: 이전본이 덮이지 않도록 오늘 고친 것으로 표시하고 저장
+function replaceDb(data) {
+  const view = db.viewType;
+  db = JSON.parse(JSON.stringify(data));
+  db.viewType = view;
+  db.meta.editDay = todayStr();
+  normalizeSeasons(db);
+  save();
+  render();
+}
