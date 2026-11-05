@@ -8,7 +8,7 @@
 ## 결과물
 | 파일 | 설명 |
 |---|---|
-| `docs/` | 웹 배포용(GitHub Pages). `index.html`(앱 본체) + 홈 화면 앱·오프라인 파일. GitHub에 올리면 위 주소에 반영됩니다 |
+| `docs/` | 웹 배포용 빌드 결과. `index.html`(앱 본체) + 홈 화면 앱·오프라인 파일. 저장소에는 넣지 않고 GitHub가 올라올 때마다 새로 만듭니다 |
 | `dist/clothes.html` | 앱 본체 파일판. 폰에 복사해서 크롬으로 열 수도 있습니다 (저장소에는 올리지 않음) |
 | `dist/의류관리_초기데이터.xlsx` | 출력물을 옮긴 초기 데이터. PC에서 검토하는 용도이며, 앱에도 이미 같은 데이터가 들어 있습니다 |
 
@@ -90,5 +90,6 @@
 ## 개발 (AI에게 수정을 맡길 때)
 - **수정 전에 [AGENTS.md](AGENTS.md)를 먼저 읽게 하세요.** 구조, 데이터 형식, 사용자가 확정한 규칙(예정일, 시즌 운영, 표기, 화면 배치)이 정리되어 있습니다. Claude Code는 `CLAUDE.md`를 통해 자동으로 읽습니다.
 - 빌드: `node build.js` → `dist/clothes.html`, `docs/`(웹 배포용)
-- 배포: 저장소 https://github.com/silkcut911/clothing-manager 에 올리면(push) GitHub Pages가 `docs/`를 위 주소로 내보냅니다. AI에게는 zip 대신 이 저장소를 주면 됩니다.
+- 배포: 저장소 https://github.com/silkcut911/clothing-manager 의 `main`에 올리면(push, PR merge, GitHub 웹에서 직접 수정 모두) **GitHub Actions가 자동으로 빌드 → 테스트 → 배포**합니다(1~3분). 테스트가 실패하면 배포되지 않고 폰 앱은 이전 버전 그대로입니다. 진행·결과는 저장소의 **Actions** 탭에서 봅니다(초록 체크 = 반영됨, 빨간 X = 실패).
+- AI에게는 zip 대신 이 저장소 주소를 주면 됩니다(Claude Code, Codex 등 코딩 에이전트). 여러 PC에서 고칠 때는 시작 전에 최신판 받기(`git pull`).
 - 확인: `node tools/smoke-test.js` (puppeteer-core 필요). 마지막 줄이 `OK`면 통과입니다.

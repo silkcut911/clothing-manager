@@ -15,7 +15,8 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
 
 (async () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clothes-test-'));
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, userDataDir });
+  // GitHub Actions(리눅스)에서는 Chrome 샌드박스가 막혀 있어 끔
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, userDataDir, args: process.env.CI ? ['--no-sandbox'] : [] });
   const page = await browser.newPage();
   await page.setViewport({ width: 384, height: 740, deviceScaleFactor: 2, isMobile: true });
   const errors = [];

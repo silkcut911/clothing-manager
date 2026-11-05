@@ -15,7 +15,7 @@
 
 ## 1. 무엇인가
 - 개인 의류 관리 앱입니다. **안드로이드 폰(갤럭시 S25) 크롬**에서 씁니다. PC 크롬에서도 똑같이 돕니다.
-- 실행 방식: **GitHub Pages 웹 주소**(https://silkcut911.github.io/clothing-manager/, 저장소 silkcut911/clothing-manager, `main` 브랜치의 `docs/` 폴더)로 여는 것이 기본입니다. 서비스워커로 오프라인 실행되고, 데이터는 여전히 폰 브라우저에만 있습니다(서버 없음). `dist/clothes.html` 파일판도 계속 동작해야 합니다.
+- 실행 방식: **GitHub Pages 웹 주소**(https://silkcut911.github.io/clothing-manager/, 저장소 silkcut911/clothing-manager)로 여는 것이 기본입니다. `main`에 push되면 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)이 빌드 → smoke-test → Pages 배포를 합니다(테스트 실패 시 배포 안 됨). 서비스워커로 오프라인 실행되고, 데이터는 여전히 폰 브라우저에만 있습니다(서버 없음). `dist/clothes.html` 파일판도 계속 동작해야 합니다.
 - 데이터는 브라우저 localStorage에 자동 저장되고, 엑셀(.xlsx)로 백업·복원합니다.
 - 초기 데이터는 사용자가 쓰던 **출력물 시트(FW 2026-27)**를 옮긴 것입니다([src/seed.js](src/seed.js)).
 
@@ -32,10 +32,11 @@ clothing-manager/
   vendor/xlsx.full.min.js  SheetJS 0.18.5 (오프라인용으로 HTML에 넣음)
   web/           웹 배포용 고정 파일: manifest.webmanifest, sw.js(오프라인, 네트워크 우선), 아이콘
   build.js       src/* → dist/clothes.html, dist/의류관리_초기데이터.xlsx, docs/(index.html + web/*)
-  docs/          빌드 결과(웹 배포용). 직접 고치지 말고 빌드로 만든 뒤 커밋한다
+  docs/          빌드 결과(웹 배포용). 커밋하지 않음(.gitignore) — Actions가 빌드해서 배포
+  .github/workflows/deploy.yml  push 시 자동 빌드·테스트·배포
   tools/smoke-test.js  회귀 테스트 (headless Chrome)
 ```
-- 빌드: `node build.js`. 앱은 **HTML 하나**(`dist/clothes.html` = `docs/index.html`, docs 쪽만 manifest 링크 추가)입니다. 고친 뒤 빌드 → 테스트 → `docs/`까지 커밋하고 push하면 폰에 반영됩니다(push는 사용자 확인 후).
+- 빌드: `node build.js`. 앱은 **HTML 하나**(`dist/clothes.html` = `docs/index.html`, docs 쪽만 manifest 링크 추가)입니다. 고친 뒤 빌드 → 테스트 → `src/` 등을 커밋하고 push하면 Actions가 배포해 폰에 반영됩니다(push는 사용자 확인 후). push 후 Actions 결과가 성공인지 확인한다.
 - https로 열 때만: 서비스워커 등록·저장공간 보존 요청(main.js), 엑셀 공유 버튼(Web Share, `canShareFiles()`). file://에서는 숨겨진다.
 - app.js, season.js, main.js는 **하나의 `<script>`로 이어 붙습니다**(build.js). 그래서 시작 코드는 반드시 main.js에 두세요. app.js 끝에 두면 season.js의 const보다 먼저 실행되어 오류가 납니다.
 - **외부 라이브러리나 CDN을 쓰지 않습니다.** 오프라인 단일 파일이 원칙입니다.
