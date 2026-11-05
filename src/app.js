@@ -452,14 +452,12 @@ function banners(part) {
   if (seededNow) h += `<div class="banner">처음 실행이라 <b>초기 데이터(출력물 기준)</b>로 시작했습니다. 백업 엑셀이 있으면 <a href="#" id="bnImport">엑셀 불러오기</a>.</div>`;
   const lb = db.meta.lastBackup;
   if (!seededNow && (!lb || daysBetween(lb.slice(0, 10), todayStr()) >= 7))
-    h += `<div class="banner">마지막 엑셀 백업: <b>${lb ? lb.slice(0, 10) : '없음'}</b> · <a href="#" id="bnBackup">지금 엑셀로 저장</a>${canShareFiles() ? ' · <a href="#" id="bnShare">공유</a>' : ''}</div>`;
+    h += `<div class="banner">마지막 엑셀 백업: <b>${lb ? lb.slice(0, 10) : '없음'}</b> · <a href="#" id="bnBackup">지금 엑셀로 저장</a></div>`;
   return h;
 }
 function bindBanners() {
   document.getElementById('bnImport')?.addEventListener('click', (e) => { e.preventDefault(); importXlsx(); });
-  document.getElementById('bnBackup')?.addEventListener('click', (e) => { e.preventDefault(); exportXlsx(); });
-  document.getElementById('bnShare')?.addEventListener('click', (e) => { e.preventDefault(); shareXlsx(); });
-}
+  document.getElementById('bnBackup')?.addEventListener('click', (e) => { e.preventDefault(); exportXlsx(); });}
 
 // ---------- 그룹 ----------
 let groupFilter = { showOff: true, sort: 'order', edit: false };
@@ -794,9 +792,9 @@ function viewSettings() {
 
   let h = banners() + `<div class="section-t">엑셀 백업 / 복원</div><div class="card">
       <button class="btn pri block" id="exp">엑셀로 저장 (현재본 전체를 파일로)</button>
-      ${canShareFiles() ? '<button class="btn pri block" id="shr" style="margin-top:8px">엑셀 공유 (구글드라이브·카톡 등으로 보내기)</button>' : ''}
       <button class="btn block" id="imp" style="margin-top:8px">엑셀 불러오기 (현재 데이터 교체)</button>
       <div class="muted" style="margin-top:8px">마지막 백업: ${db.meta.lastBackup ? db.meta.lastBackup.slice(0, 16).replace('T', ' ') : '없음'} · 자동저장: ${storageOK ? '사용 중' : '<b style="color:var(--bad)">불가 — 엑셀 저장 필수</b>'}</div>
+      <div class="muted" style="margin-top:4px">구글드라이브·카톡으로 보내기: 엑셀로 저장 후 <b>내 파일 → 다운로드</b>에서 파일을 길게 눌러 <b>공유</b></div>
     </div>` + versionSectionHtml() + seasonSectionHtml(type) + saveSectionHtml(type);
   h += `<div class="section-t">${type} 그룹</div><div class="card">` +
     groups.map((g, i) => `<div class="list-date"><span class="grow"><b>${esc(g.name)}</b> <span class="muted">${tempLabel(g)} · ${groupItems(g.id).length}벌</span></span>
@@ -827,7 +825,6 @@ function viewSettings() {
   $app.innerHTML = h;
   bindBanners();
   document.getElementById('exp').onclick = exportXlsx;
-  document.getElementById('shr')?.addEventListener('click', shareXlsx);
   document.getElementById('imp').onclick = importXlsx;
   bindSeasonSection(type);
   bindVersionSection();
@@ -914,38 +911,18 @@ function deleteGroup(gid) {
 }
 
 // ---------- 엑셀 ----------
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-// 공유(구글드라이브·카톡 등)는 https 주소로 열었을 때만 됨 (file:// 에서는 버튼 숨김)
-const canShareFiles = () => !!navigator.canShare && navigator.canShare({ files: [new File([''], 'a.xlsx', { type: XLSX_MIME })] });
-function fullWorkbook() {
+// 공유 버튼(Web Share)은 두지 않음: 안드로이드 크롬이 .xlsx 공유를 막음(Permission denied). 다운로드 후 '내 파일'에서 공유하도록 안내
+function exportXlsx() {
   const wb = dbToWorkbook(XLSX, db);
   addFinalsToWorkbook(wb);
   const d = new Date();
-  return { wb, name: `의류관리_${todayStr().replace(/-/g, '')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.xlsx` };
-}
-function markBackup() {
+  const name = `의류관리_${todayStr().replace(/-/g, '')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.xlsx`;
+  XLSX.writeFile(wb, name);
   db.meta.lastBackup = new Date().toISOString();
   seededNow = false;
   save();
+  toast(`저장됨: ${name} (다운로드 폴더) · 드라이브·카톡으로 보내려면 내 파일 → 다운로드에서 길게 눌러 공유`);
   render();
-}
-function exportXlsx() {
-  const { wb, name } = fullWorkbook();
-  XLSX.writeFile(wb, name);
-  markBackup();
-  toast(`저장됨: ${name} (다운로드 폴더)`);
-}
-async function shareXlsx() {
-  const { wb, name } = fullWorkbook();
-  const file = new File([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], name, { type: XLSX_MIME });
-  try {
-    await navigator.share({ files: [file], title: name });
-  } catch (e) {
-    if (e.name !== 'AbortError') alert('공유하지 못했습니다: ' + e.message + '\n엑셀로 저장(다운로드)을 이용하세요.');
-    return; // 취소하면 백업으로 치지 않음
-  }
-  markBackup();
-  toast(`공유됨: ${name}`);
 }
 function importXlsx() {
   const inp = document.getElementById('fileIn');

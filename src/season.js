@@ -101,7 +101,7 @@ function saveSectionHtml(type) {
     ${list.map((x) => `<div class="list-date"><span class="grow"><b>${esc(x.name || '백업본')}</b>
       <div class="muted">기준일 ${x.baseDate}${x.cut ? ' (기준일까지 + 예정일)' : ''} · ${esc(x.seasonName)} · ${x.created.slice(0, 16).replace('T', ' ')}</div></span>
       <button class="btn sm" data-sr="${x.id}">복원</button><button class="btn sm" data-fx="${x.id}">엑셀</button><button class="btn sm danger" data-sd="${x.id}">삭제</button></div>`).join('') || '<div class="muted" style="margin-top:8px">백업본 없음</div>'}
-    <div class="muted" style="margin-top:6px">백업본은 이 폰의 브라우저에 보관됩니다. 바깥 보관은 위의 [엑셀로 저장]이나 [엑셀 공유]를 쓰세요.</div></div>`;
+    <div class="muted" style="margin-top:6px">백업본은 이 폰의 브라우저에 보관됩니다. 바깥 보관은 위의 [엑셀로 저장]을 쓰세요.</div></div>`;
 }
 function bindSeasonSection(type) {
   const snapBy = (id) => loadSnaps().find((x) => x.id === id);

@@ -37,7 +37,8 @@ clothing-manager/
   tools/smoke-test.js  회귀 테스트 (headless Chrome)
 ```
 - 빌드: `node build.js`. 앱은 **HTML 하나**(`dist/clothes.html` = `docs/index.html`, docs 쪽만 manifest 링크 추가)입니다. 고친 뒤 빌드 → 테스트 → `src/` 등을 커밋하고 push하면 Actions가 배포해 폰에 반영됩니다(push는 사용자 확인 후). push 후 Actions 결과가 성공인지 확인한다.
-- https로 열 때만: 서비스워커 등록·저장공간 보존 요청(main.js), 엑셀 공유 버튼(Web Share, `canShareFiles()`). file://에서는 숨겨진다.
+- https로 열 때만: 서비스워커 등록·저장공간 보존 요청(main.js).
+- **엑셀 공유 버튼(Web Share API)은 넣지 않는다.** 안드로이드 크롬은 .xlsx 공유를 막아 `navigator.share`가 'Permission denied'로 실패한다(canShare는 true를 돌려줘서 속음, 2026-11-05 실제 폰 확인). 대신 다운로드 후 '내 파일'에서 공유하라고 안내한다.
 - app.js, season.js, main.js는 **하나의 `<script>`로 이어 붙습니다**(build.js). 그래서 시작 코드는 반드시 main.js에 두세요. app.js 끝에 두면 season.js의 const보다 먼저 실행되어 오류가 납니다.
 - **외부 라이브러리나 CDN을 쓰지 않습니다.** 오프라인 단일 파일이 원칙입니다.
 
