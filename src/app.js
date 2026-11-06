@@ -71,16 +71,15 @@ function chipStyle(item) {
 }
 // 옷 모양(색 상자): Length로 정하고, 빈칸이면 종류로 짐작 (데이터는 바꾸지 않음)
 function shapeOf(it) {
-  const ln = it.length || '', k = it.kind || '';
-  if (/long/i.test(ln)) return 'long';
-  if (/rbd|waist/i.test(ln)) return 'waist'; // 허리줄은 웨이스트밴드일 때만
-  if (/short/i.test(ln)) return 'short';
-  if (/med/i.test(ln)) return 'medium';
-  if (/coat|trench/i.test(k)) return 'long';
-  if (/blouson/i.test(k)) return 'short';
-  return 'medium';
+  const ln = it.length || '', k = it.kind || '', hd = String(it.hood || '').trim().toLowerCase();
+  // 길이: Length로, 빈칸이면 종류로 짐작. 허리줄은 웨이스트밴드만
+  const len = /long/i.test(ln) ? 'long' : /rbd|waist/i.test(ln) ? 'waist' : /short/i.test(ln) ? 'short' : /med/i.test(ln) ? 'medium'
+    : /coat|trench/i.test(k) ? 'long' : /blouson/i.test(k) ? 'short' : 'medium';
+  // 목 모양: Hood 값마다 설정에서 고른 것(db.neck, 없으면 일반). Hood 칸이 비었으면 종류가 Coat·Trench·Suit면 칼라, 아니면 일반
+  const neck = hd ? (db.neck?.[hd] || 'plain') : /coat|trench|suit/i.test(k) ? 'collar' : 'plain';
+  return len + '-' + neck;
 }
-const chip = (item, cls = '', label = '') => `<span class="chipw"><span class="chip ${cls} shp-${shapeOf(item)}" style="${chipStyle(item)}">${label}</span></span>`;
+const chip = (item, cls = '', label = '') => `<span class="chipw"><span class="chip ${cls} shp shp-${shapeOf(item)}" style="${chipStyle(item)}">${label}</span></span>`;
 const badges = (it) =>
   (it.nx === 'New' ? '<span class="badge b-new">New</span>' : '') +
   (it.nx === 'Ex' ? '<span class="badge b-ex">처분예정</span>' : '') +
@@ -419,7 +418,7 @@ function viewHome() {
       const st = groupStats(db, items);
       h += `<div class="gcard" data-g="${g.id}">
         <div class="row"><span class="name grow">${esc(g.name)}</span><span class="muted">${tempLabel(g)} · ${st.n}벌 ›</span></div>
-        <div class="boxes">${items.map((it) => `<i class="shp-${shapeOf(it)}" style="${chipStyle(it)}" title="${esc(it.brand + ' ' + it.color)}"></i>`).join('')}</div>
+        <div class="boxes">${items.map((it) => `<i class="shp shp-${shapeOf(it)}" style="${chipStyle(it)}" title="${esc(it.brand + ' ' + it.color)}"></i>`).join('')}</div>
         ${usageBar(st, prog?.ratio, groupDates(items))}
       </div>`;
     }
@@ -507,7 +506,7 @@ function viewGroup(gid) {
   const today = todayStr();
 
   let h = `<div class="card">
-      <div class="boxes">${all.map((it) => `<i class="shp-${shapeOf(it)}" style="${chipStyle(it)}"></i>`).join('')}</div>
+      <div class="boxes">${all.map((it) => `<i class="shp shp-${shapeOf(it)}" style="${chipStyle(it)}"></i>`).join('')}</div>
       ${usageBar(st, prog?.ratio, groupDates(all))}
     </div>
     <div class="tabs">` + (editing
@@ -865,7 +864,10 @@ function viewSettings() {
       const nUse = (v) => db.items.filter((x) => x[f] === v).length;
       const unused = list.filter((v) => !nUse(v)).length;
       return `<details class="terms"${openTerms.has(f) ? ' open' : ''} data-tf="${f}"><summary><b>${FIELD_LABEL[f]}</b> <span class="muted">${list.length}개${unused ? ` · 안 쓰는 값 ${unused}` : ''}</span></summary>` +
-        list.map((v) => { const n = nUse(v); return `<div class="list-date"><span class="grow">${esc(v)} <span class="muted">${n}벌</span></span>${n ? '' : `<button class="btn sm danger" data-td="${f}" data-v="${esc(v)}">삭제</button>`}</div>`; }).join('') +
+        (f === 'hood' ? '<div class="muted" style="margin:4px 0">오른쪽에서 옷 그림의 목 모양(후드 / 칼라 / 일반)을 고릅니다. 새 값은 일반입니다.</div>' : '') +
+        list.map((v) => { const n = nUse(v); return `<div class="list-date"><span class="grow">${esc(v)} <span class="muted">${n}벌</span></span>` +
+          (f === 'hood' ? `<select data-nk="${esc(v)}" style="width:auto;padding:4px 6px">${Object.entries(NECK_NAME).map(([k, t]) => `<option value="${k}" ${(db.neck[neckKey(v)] || 'plain') === k ? 'selected' : ''}>${t}</option>`).join('')}</select>` : '') +
+          `${n ? '' : `<button class="btn sm danger" data-td="${f}" data-v="${esc(v)}">삭제</button>`}</div>`; }).join('') +
         `</details>`;
     }).join('') + `</div>
     <div class="section-t">색상 (${db.colors.length})</div><div class="card">` +
@@ -891,6 +893,12 @@ function viewSettings() {
     save(); render();
   }));
   $app.querySelectorAll('details[data-tf]').forEach((d) => d.addEventListener('toggle', () => { d.open ? openTerms.add(d.dataset.tf) : openTerms.delete(d.dataset.tf); }));
+  // Hood 값의 옷 그림 목 모양: 고르면 그 값을 쓰는 옷 그림이 모두 바뀜
+  $app.querySelectorAll('[data-nk]').forEach((s) => (s.onchange = () => {
+    const k = neckKey(s.dataset.nk);
+    if (s.value === 'plain') delete db.neck[k]; else db.neck[k] = s.value;
+    save(); toast(`${s.dataset.nk} → ${NECK_NAME[s.value]} 그림`);
+  }));
   $app.querySelectorAll('[data-td]').forEach((b) => (b.onclick = () => {
     const f = b.dataset.td, v = b.dataset.v;
     if (db.items.some((x) => x[f] === v)) return alert('이 값을 쓰는 의류가 있어 삭제할 수 없습니다.');
@@ -914,7 +922,7 @@ function viewSettings() {
   document.getElementById('reset').onclick = () => {
     if (!confirm('현재 데이터를 모두 지우고 초기 데이터로 되돌릴까요?\n먼저 엑셀로 저장해 두는 것을 권장합니다.')) return;
     if (!confirm('정말 되돌릴까요? 되돌릴 수 없습니다.')) return;
-    db = buildSeedDB(); normalizeGroups(db); save(); render();
+    db = buildSeedDB(); normalizeGroups(db); ensureNeck(db); moveModels(db); save(); render();
   };
 }
 

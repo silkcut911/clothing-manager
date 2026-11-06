@@ -4,6 +4,7 @@ db = load();
 if (db.termsVersion !== TERMS_VERSION) normalizeTerms(db); // 표기 통일 (버전이 바뀔 때 한 번)
 normalizeOrder(db);
 normalizeGroups(db);
+ensureNeck(db); // Hood 값별 옷 그림 목 모양(처음 한 번 기본값)
 moveModels(db); // Hood 칸에 있던 모델명(Viewforth·Powell·Pea Coat·Packable·Waist Tied) → 모델명 칸
 normalizeSeasons(db);
 pruneOld(); // 5년이 지난 기록·시즌 정리

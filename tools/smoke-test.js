@@ -190,6 +190,29 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   check('앱 이름 Silk Wardrobe(대문자 제목), 예전 엑셀의 색상 열도 읽음', brandTitle && oldColor, `${brandTitle} ${oldColor}`);
   check('모델명: 엑셀 왕복, 예전 엑셀도 옮겨짐', md.rt === 'Viewforth' && md.old === 'Viewforth', JSON.stringify([md.rt, md.old]));
 
+  // 11. 옷 그림 = 길이 4 × 목 3(후드·칼라·일반), 모든 그림 CSS 있음
+  const shp = await page.evaluate(() => {
+    const t = (o) => shapeOf({ length: '', kind: '', hood: '', ...o });
+    const cases = [t({ hood: 'Hood', length: 'Short-Ln' }) === 'short-hood', t({ hood: 'Fur Hood', length: 'Long-Ln' }) === 'long-hood', t({ hood: 'Hdn Hood' }) === 'medium-plain',
+      t({ hood: 'China Cllr' }) === 'medium-plain', t({ hood: 'Shirt Cllr', length: 'Rbd Waist' }) === 'waist-collar', t({ kind: 'Coat' }) === 'long-collar', t({ kind: 'Jacket' }) === 'medium-plain', t({ hood: 'Hood', kind: 'Coat' }) === 'long-hood'];
+    const css = [...document.styleSheets].flatMap((s) => [...s.cssRules].map((r) => r.selectorText || ''));
+    const all = db.items.every((i) => css.includes('.shp-' + shapeOf(i)));
+    return { cases, all };
+  });
+  // Hood 값의 목 모양은 설정에서 고름: China Cllr → 칼라로 바꾸면 그 옷 그림이 바뀌고, 엑셀 왕복해도 유지, 새 값은 일반
+  const nk = await page.evaluate(() => {
+    const it = db.items.find((i) => i.hood === 'China Cllr'), before = shapeOf(it);
+    db.neck['china cllr'] = 'collar'; const after = shapeOf(it);
+    const nd = workbookToDb(XLSX, XLSX.read(XLSX.write(dbToWorkbook(XLSX, db, '최신본'), { type: 'array', bookType: 'xlsx' })));
+    const kept = nd.neck['china cllr'] === 'collar' && nd.neck['hood'] === 'hood';
+    delete db.neck['china cllr'];
+    return { before, after, kept, fresh: shapeOf({ hood: 'Stand Cllr', length: 'Med-Ln' }) };
+  });
+  await page.goto(URL + '#/settings'); await wait(200);
+  const sel = await page.evaluate(() => { document.querySelector('details[data-tf="hood"]').open = true; return document.querySelectorAll('select[data-nk]').length; });
+  check('목 모양 설정: 바꾸면 그림 바뀜, 엑셀 왕복 유지, 새 값은 일반, 설정에 선택 칸', nk.before.endsWith('-plain') && nk.after.endsWith('-collar') && nk.kept && nk.fresh === 'medium-plain' && sel > 5, JSON.stringify({ ...nk, sel }));
+  check('옷 그림: 길이 × 목(후드·칼라·일반) 규칙, 모든 옷의 그림 있음', shp.cases.every(Boolean) && shp.all, JSON.stringify(shp));
+
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));
   await browser.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });

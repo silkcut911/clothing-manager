@@ -100,6 +100,14 @@ function seasonProgress(db, type, totalTg, today = todayStr()) {
   return { season: s, ratio, expected: Math.round(totalTg * ratio) };
 }
 
+// ---------- 옷 그림의 목 모양 ----------
+// Hood 값마다 그림의 목 모양(hood 후드 / collar 칼라 / plain 일반)을 db.neck 에 둔다. 설정 → 속성 값 → Hood 에서 고름(사용자 결정 2026-11-06).
+// 목록에 없는 값은 일반. 키는 소문자. 처음 값(db.neck 이 없을 때만 채움):
+const NECK_DEFAULT = { 'hood': 'hood', 'fur hood': 'hood', 'lttrd z hd': 'hood', 'shirt cllr': 'collar', 'cord. cllr': 'collar', 'suit': 'collar' };
+const NECK_NAME = { hood: '후드', collar: '칼라', plain: '일반' };
+const neckKey = (v) => String(v || '').trim().toLowerCase();
+function ensureNeck(db) { if (!db.neck) db.neck = { ...NECK_DEFAULT }; }
+
 // ---------- 모델명 ----------
 // 예전에는 모델명·특징 일부가 Hood 칸에 들어가 있었음 → 모델명 칸으로 옮김(사용자 결정 2026-11-06).
 // 칼라 모양(High Neck 등)과 Suit는 Hood에 남김. 모델명이 이미 있으면 건드리지 않음(여러 번 실행해도 같음)
@@ -110,6 +118,8 @@ function moveModels(db) {
     if (it.model == null) it.model = '';
     if (!it.model && HOOD_TO_MODEL.includes(String(it.hood || '').trim().toLowerCase())) { it.model = it.hood; it.hood = ''; n++; }
   }
+  // Hood 값 목록에서도 빼기(쓰는 옷이 없을 때만)
+  if (db.terms?.hood) db.terms.hood = db.terms.hood.filter((v) => !HOOD_TO_MODEL.includes(v.toLowerCase()) || db.items.some((i) => i.hood === v));
   return n;
 }
 
@@ -238,7 +248,7 @@ function dbToWorkbook(XLSX, db, kind = '') { // kind: 최신본 / 시즌최종�
     'ID': s.id, '구분': s.type, '이름': s.name, '시작일': s.start, '종료일': s.end,
     '현재': db.currentSeason[s.type] === s.id ? 'Y' : 'N', '상태': SEASON_STATUS[s.status] || '',
   }));
-  const terms = TERM_FIELDS.flatMap((f) => (db.terms?.[f] || []).map((v) => ({ '항목': f, '값': v })));
+  const terms = TERM_FIELDS.flatMap((f) => (db.terms?.[f] || []).map((v) => ({ '항목': f, '값': v, '그림': f === 'hood' ? NECK_NAME[db.neck?.[neckKey(v)] || 'plain'] : '' })));
   const info = [
     ...(kind ? [{ '항목': '파일종류', '값': kind }] : []),
     { '항목': '저장일시', '값': new Date().toLocaleString('ko-KR') },
@@ -258,7 +268,7 @@ function dbToWorkbook(XLSX, db, kind = '') { // kind: 최신본 / 시즌최종�
     [7, 11, 5, 6, 8, 16]);
   add('그룹', groups, ['ID', '시즌구분', '그룹명', '기온·추천월', '순서'], [5, 7, 12, 24, 5]);
   add('색상', colors, ['색상명', '색상코드'], [16, 10]);
-  add('속성값', terms, ['항목', '값'], [10, 24]);
+  add('속성값', terms, ['항목', '값', '그림'], [10, 24, 6]); // 그림: Hood 값의 옷 그림 목 모양(후드/칼라/일반)
   add('시즌', seasons, ['ID', '구분', '이름', '시작일', '종료일', '현재', '상태'], [8, 5, 12, 11, 11, 5, 7]);
   add('정보', info, ['항목', '값'], [10, 80]);
   return wb;
@@ -330,13 +340,16 @@ function workbookToDb(XLSX, wb) {
 
   // 속성값 시트는 없어도 됨 (예전 백업) → 의류에 쓰인 값으로 채움
   const terms = {};
+  let neck = null; // 예전 엑셀(그림 열 없음)이면 처음 값
   if (wb.Sheets['속성값']) for (const r of rows('속성값')) {
-    const f = str(r['항목']), v = str(r['값']);
+    const f = str(r['항목']), v = str(r['값']), pic = str(r['그림']);
     if (TERM_FIELDS.includes(f) && v) (terms[f] ||= []).push(v);
+    const k = Object.keys(NECK_NAME).find((x) => NECK_NAME[x] === pic);
+    if (f === 'hood' && v && k) { neck ||= {}; if (k !== 'plain') neck[neckKey(v)] = k; }
   }
 
   const db = {
-    version: 1, seasons, currentSeason, viewType: 'FW', groups, colors, items, usage, terms,
+    version: 1, seasons, currentSeason, viewType: 'FW', groups, colors, items, usage, terms, neck: neck || { ...NECK_DEFAULT },
     meta: { lastBackup: null, updated: new Date().toISOString() },
   };
   normalizeTerms(db);
@@ -345,5 +358,5 @@ function workbookToDb(XLSX, wb) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { moveModels, HOOD_TO_MODEL, countWindow, windowYear, seasonYear, seasonForDate, relinkSeasons, WINDOW_TEXT, todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
+  module.exports = { NECK_DEFAULT, NECK_NAME, neckKey, ensureNeck, moveModels, HOOD_TO_MODEL, countWindow, windowYear, seasonYear, seasonForDate, relinkSeasons, WINDOW_TEXT, todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
 }

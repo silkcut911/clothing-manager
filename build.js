@@ -25,6 +25,7 @@ for (const f of fs.readdirSync(path.join(__dirname, 'web'))) fs.copyFileSync(pat
 
 const db = buildSeedDB();
 core.moveModels(db); // 앱 시작 때와 같이 Hood의 모델명을 모델명 칸으로
+core.ensureNeck(db); // Hood 값별 옷 그림 목 모양 기본값
 fs.writeFileSync(path.join(__dirname, 'dist/의류관리_초기데이터.xlsx'), XLSX.write(core.dbToWorkbook(XLSX, db), { type: 'buffer', bookType: 'xlsx' }));
 
 console.log('dist/clothes.html', (html.length / 1024).toFixed(0) + 'KB');
