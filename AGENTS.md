@@ -144,7 +144,7 @@ db 구조:
   - 색 상자 안 표시: `N`=New, `Ex`=처분예정, `Off`=비활성
 - **색 상자는 옷 모양**(사용자 결정, 2026-11-05~06): **길이 4 × 목 3 = 12가지**. `shapeOf(it)` → `길이-목` (CSS `.shp .shp-short-hood` 등, app.html의 data URI SVG mask). **데이터는 바꾸지 않고** 기존 값으로 고른다.
   - 길이: Length(Long-Ln → 긴, Med-Ln → 중간, Short-Ln → 짧은, Rbd Waist → 웨이스트밴드), 빈칸이면 종류(Coat·Trench → 긴, Blouson → 짧은, 나머지 중간). **허리줄은 웨이스트밴드만.**
-  - 목: **Hood 값마다 설정 → 속성 값 → Hood에서 후드 / 칼라 / 일반을 고른다**(`db.neck`, 키는 소문자, 사용자 결정: 새 칼라가 생겨도 코드 수정 없이). 처음 값(`NECK_DEFAULT`): Hood · Fur Hood · Lttrd Z Hd → 후드, Shirt Cllr · Cord. Cllr · Suit → 칼라, 그 밖(Hdn Hood · China Cllr · High Neck · 새 값) → 일반. Hood 칸이 비었으면 종류가 Coat·Trench·Suit면 칼라, 아니면 일반. 엑셀 `속성값` 시트의 `그림` 열(후드/칼라/일반)에 저장·복원(열이 없는 예전 엑셀은 처음 값). 후드 = 크게 감싸는 둥근 모양, 칼라 = V자 목선, 일반 = 넓게 각지게 올라온 목.
+  - 목: **Hood 값마다 설정 → 속성 값 → Hood에서 후드 / 칼라 / 일반을 고른다**(`db.neck`, 키는 소문자, 사용자 결정: 새 칼라가 생겨도 코드 수정 없이). 처음 값(`NECK_DEFAULT`): Hood · Fur Hood · Lttrd Z Hd → 후드, Shirt Cllr · Cord. Cllr · Suit → 칼라, 그 밖(Hdn Hood · China Cllr · High Neck · 새 값) → 일반. **의류 추가·수정에서 Hood에 새 값을 입력하면 '그림 모양' 선택 칸이 함께 나온다**(기본 일반). Hood 칸이 비었으면 종류가 Coat·Trench·Suit면 칼라, 아니면 일반. 엑셀 `속성값` 시트의 `그림` 열(후드/칼라/일반)에 저장·복원(열이 없는 예전 엑셀은 처음 값). 후드 = 크게 감싸는 둥근 모양, 칼라 = V자 목선, 일반 = 넓게 각지게 올라온 목.
   - 모양: 몸통은 위에서 4/32 내림(후드 자리), 전체 가로 85%·몸통만 92%(사용자가 예시 중 고름). 윤곽은 감싸는 `.chipw`/`.boxes`의 drop-shadow. 달력의 작은 칸은 네모 그대로.
   - 구입연도는 목록에 넣지 않습니다(의류 상세에만).
   - Dates는 같은 달이면 월을 한 번만 씁니다. 예: `9/16,21` `9/30,10/1,6`

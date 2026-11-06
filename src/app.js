@@ -657,6 +657,8 @@ function combo(name, values, cur, { none = '— 없음 —', newLabel = '+ 새�
   return `<select name="${name}" data-combo>${none !== null ? `<option value="">${none}</option>` : ''}${list.map((v) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(v)}</option>`).join('')}<option value="__new">${newLabel}</option></select>
     <input name="${name}__new" placeholder="새 값 입력" hidden style="margin-top:4px">`;
 }
+// Hood에 새 값을 입력할 때 옷 그림의 목 모양도 함께 고름(설정 → 속성 값 → Hood 에서 나중에 바꿀 수 있음)
+const neckPick = `<label class="neckpick" hidden style="margin-top:4px">그림 모양 <select name="hood__neck" style="width:auto;padding:4px 6px">${Object.entries(NECK_NAME).map(([k, t]) => `<option value="${k}" ${k === 'plain' ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
 function editItem(id, gid) {
   const isNew = !id;
   if (isNew && !gid) gid = typeGroups()[0]?.id;
@@ -680,7 +682,7 @@ function editItem(id, gid) {
       <div><label>Tg N. (목표)</label><input name="tg" type="number" min="0" inputmode="numeric" value="${esc(it.tg)}"></div>
       <div><label>NX</label><select name="nx">${[['', '-'], ['New', 'New'], ['Ex', 'Ex (처분예정)']].map(([v, t]) => `<option value="${v}" ${it.nx === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div><label>Yr (구입연도 2자리)</label><input name="yr" type="number" inputmode="numeric" placeholder="예: 24" value="${esc(yr2(it.yr))}"></div>
-      ${FIELDS.slice(1).map(([k, t]) => `<div><label>${t}</label>${combo(k, vals(k), it[k])}</div>`).join('')}
+      ${FIELDS.slice(1).map(([k, t]) => `<div><label>${t}</label>${combo(k, vals(k), it[k])}${k === 'hood' ? neckPick : ''}</div>`).join('')}
     </div>
     <label>메모</label><textarea name="memo" rows="2">${esc(it.memo)}</textarea>
     <div class="row" style="margin-top:14px">
@@ -700,6 +702,7 @@ function editItem(id, gid) {
       sel.addEventListener('change', () => {
         const inp = f.elements[sel.name + '__new'];
         inp.hidden = sel.value !== '__new';
+        const np = sel.parentNode.querySelector('.neckpick'); if (np) np.hidden = inp.hidden; // Hood 새 값: 그림 모양도 고름
         if (!inp.hidden) inp.focus();
       });
     });
@@ -729,6 +732,7 @@ function editItem(id, gid) {
       if (!db.colors.find((c) => c.name === color)) db.colors.push({ name: color, hex: v.color__hex || '#888888' });
       const out = { ...it, groupId, active: v.active === '1', brand, color, tg: Number(v.tg) || 0, nx: v.nx, yr: normalizeYr(v.yr), memo: v.memo.trim() };
       for (const [k] of FIELDS.slice(1)) out[k] = normalizeTerm(k, pick(k));
+      if (v.hood === '__new' && out.hood) { const nk = neckKey(out.hood); if (v.hood__neck === 'plain') delete db.neck[nk]; else db.neck[nk] = v.hood__neck; }
       if (isNew) { out.id = nextId('C', db.items, 3); out.order = nextOrder(out.groupId); db.items.push(out); }
       else {
         if (out.groupId !== itemById(id).groupId) out.order = 1e9; // 옮긴 그룹의 맨 뒤

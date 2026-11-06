@@ -199,6 +199,7 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
     const all = db.items.every((i) => css.includes('.shp-' + shapeOf(i)));
     return { cases, all };
   });
+  const db0id = await page.evaluate(() => db.items.find((i) => i.hood === 'Hood').id);
   // Hood 값의 목 모양은 설정에서 고름: China Cllr → 칼라로 바꾸면 그 옷 그림이 바뀌고, 엑셀 왕복해도 유지, 새 값은 일반
   const nk = await page.evaluate(() => {
     const it = db.items.find((i) => i.hood === 'China Cllr'), before = shapeOf(it);
@@ -210,6 +211,19 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   });
   await page.goto(URL + '#/settings'); await wait(200);
   const sel = await page.evaluate(() => { document.querySelector('details[data-tf="hood"]').open = true; return document.querySelectorAll('select[data-nk]').length; });
+  // 의류 수정에서 Hood 새 값 입력 → 그림 모양도 고름
+  await page.goto(URL + '#/item/' + db0id); await wait(200);
+  await click('#editBtn'); await wait(150);
+  const np = await page.evaluate(() => {
+    const f = document.querySelector('form'), sel = f.elements['hood'];
+    sel.value = '__new'; sel.dispatchEvent(new Event('change'));
+    const shown = !f.querySelector('.neckpick').hidden;
+    f.elements['hood__new'].value = 'Stand Cllr'; f.elements['hood__neck'].value = 'collar';
+    f.requestSubmit();
+    return shown;
+  }); await wait(200);
+  const np2 = await page.evaluate((id) => [db.items.find((i) => i.id === id).hood, db.neck['stand cllr'], shapeOf(db.items.find((i) => i.id === id)).endsWith('-collar')], db0id);
+  check('의류 수정: Hood 새 값 입력 시 그림 모양 선택 → 저장', np && np2[0] === 'Stand Cllr' && np2[1] === 'collar' && np2[2], JSON.stringify([np, ...np2]));
   check('목 모양 설정: 바꾸면 그림 바뀜, 엑셀 왕복 유지, 새 값은 일반, 설정에 선택 칸', nk.before.endsWith('-plain') && nk.after.endsWith('-collar') && nk.kept && nk.fresh === 'medium-plain' && sel > 5, JSON.stringify({ ...nk, sel }));
   check('옷 그림: 길이 × 목(후드·칼라·일반) 규칙, 모든 옷의 그림 있음', shp.cases.every(Boolean) && shp.all, JSON.stringify(shp));
 
