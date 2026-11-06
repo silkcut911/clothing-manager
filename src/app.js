@@ -73,7 +73,8 @@ function chipStyle(item) {
 function shapeOf(it) {
   const ln = it.length || '', k = it.kind || '';
   if (/long/i.test(ln)) return 'long';
-  if (/short|rbd/i.test(ln)) return 'short';
+  if (/rbd|waist/i.test(ln)) return 'waist'; // 허리줄은 웨이스트밴드일 때만
+  if (/short/i.test(ln)) return 'short';
   if (/med/i.test(ln)) return 'medium';
   if (/coat|trench/i.test(k)) return 'long';
   if (/blouson/i.test(k)) return 'short';
