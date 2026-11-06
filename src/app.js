@@ -95,8 +95,9 @@ const specLine = (it) => [it.kind, it.hood, it.length, it.fit, it.pad, it.pocket
 // 말하듯 읽히는 한 줄 이름: "Barbour Black Hdn hd medium-length lined safary"
 // 의류 목록 표: 4칸 × 2줄(윗줄/아랫줄)로 항목마다 위치와 굵기 고정 (Brand·종류만 굵게), 빈 값도 자리 유지.
 // 칸 폭은 표가 내용에 맞춰 정하므로 단어 중간에서 줄이 바뀌지 않음
-// 윗줄(굵게): Brand · Pad · Hood · Type · Pocket / 아랫줄: 색상 · Fit · Material · Length · Dates (구입연도는 상세 화면에만)
-const COLS = [[['brand', 'Brand', 1], ['color', '색상']], [['pad', 'Pad', 1], ['fit', 'Fit']], [['hood', 'Hood', 1], ['material', 'Material']], [['kind', 'Type', 1], ['length', 'Length']], [['pocket', 'Pocket'], ['dates', 'Dates']]];
+// 윗줄(굵게): Brand · Pad · Hood · Type · Pocket / 아랫줄: 색상 · Fit · Material · 모델명 · Dates
+// (구입연도는 상세 화면에만. Length는 카드에서 숨김 — 옷 그림 모양으로 보이고, 상세·전체표·엑셀에는 있음)
+const COLS = [[['brand', 'Brand', 1], ['color', '색상']], [['pad', 'Pad', 1], ['fit', 'Fit']], [['hood', 'Hood', 1], ['material', 'Material']], [['kind', 'Type', 1], ['model', 'Model']], [['pocket', 'Pocket'], ['dates', 'Dates']]];
 // 사용일 짧게: 같은 달이면 월은 처음 한 번만 (9/16,21 · 9/30,10/1,6). 예정일은 빨간색, 누르면 예정일 창
 function shortDates(list) {
   let pm = '';
@@ -110,7 +111,7 @@ function shortDates(list) {
 const itemDates = (it, s = itemStats(db, it)) => shortDates([...s.used, ...s.planned].sort((a, b) => a.date.localeCompare(b.date)));
 const cellHtml = (it, k) => (k === 'dates' ? itemDates(it) : esc(it[k] || ''));
 // 한 줄로 유지하는 항목 (Brand·색상·Pad·소재·사용일은 칸이 모자라면 줄바꿈)
-const NOWRAP = new Set(['fit', 'hood', 'length', 'kind', 'pocket']);
+const NOWRAP = new Set(['fit', 'hood', 'length', 'kind', 'pocket', 'model']);
 // 색 상자 안 표시: N(New), Ex(처분예정), Off(비활성)
 const chipLabel = (it) => (!it.active ? 'Off' : it.nx === 'Ex' ? 'Ex' : it.nx === 'New' ? 'N' : '');
 // opts: rowAttr(it, x) → 행 속성, sub(it, x) → 아래 작은 줄(없으면 생략), right(it, x) → 오른쪽 칸, rowClass(it, x), headRight
@@ -445,7 +446,7 @@ function viewHome() {
 }
 // 출력물과 같은 형식의 전체 표: 그룹 머리줄(집계) + 의류 행(옷 색으로 칠함) + 사용일 열
 function homeTable(groups) {
-  const cols = ['Cur', 'Tg', 'NX', 'Yr', 'Brand', '색상', 'Hood', 'Length', 'Fit', 'Pad', 'Pocket', 'Material', 'Type', '달성', 'Dates'];
+  const cols = ['Cur', 'Tg', 'NX', 'Yr', 'Brand', '색상', 'Model', 'Hood', 'Length', 'Fit', 'Pad', 'Pocket', 'Material', 'Type', '달성', 'Dates'];
   let t = `<div class="tblwrap"><table class="sheet"><thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>`;
   for (const g of groups) {
     const items = groupItems(g.id);
@@ -461,7 +462,7 @@ function homeTable(groups) {
         .map((u) => (u.planned ? planSpan(u) : md(u.date))).join(' ');
       t += `<tr data-i="${it.id}" class="${it.active ? '' : 'off'}" style="background:${rowBg}">
         <td class="num">${s.cur || '-'}</td><td class="num">${esc(it.tg)}</td><td>${esc(it.nx)}</td><td class="num">${yr2(it.yr)}</td>
-        <td style="${strong}" class="b">${esc(it.brand)}</td><td style="${strong}">${esc(it.color)}</td>
+        <td style="${strong}" class="b">${esc(it.brand)}</td><td style="${strong}">${esc(it.color)}</td><td>${esc(it.model)}</td>
         <td>${esc(it.hood)}</td><td>${esc(it.length)}</td><td>${esc(it.fit)}</td><td>${esc(it.pad)}</td><td>${esc(it.pocket)}</td>
         <td>${esc(it.material)}</td><td class="b">${esc(it.kind)}</td>
         <td class="chk">${s.achieved ? '<i></i>' : '-'}</td><td class="dt" data-dm="${it.id}">${dates || '<span class="muted">+</span>'}</td></tr>`;
@@ -604,7 +605,7 @@ function viewItem(id) {
     <div class="card">
       <div class="row" style="margin-bottom:8px"><div class="title grow">상세 정보</div><button class="btn sm" id="editBtn">수정</button></div>
       <dl class="kv kv2">
-        ${f('그룹', g?.name)}${f('Brand', it.brand)}${f('색상', it.color)}${f('Yr', yr2(it.yr))}${f('NX', it.nx === 'Ex' ? 'Ex (처분예정)' : it.nx)}
+        ${f('그룹', g?.name)}${f('Brand', it.brand)}${f('색상', it.color)}${f('Model', it.model)}${f('Yr', yr2(it.yr))}${f('NX', it.nx === 'Ex' ? 'Ex (처분예정)' : it.nx)}
         ${f('Tg N.', it.tg)}${f('Hood', it.hood)}${f('Length', it.length)}${f('Fit', it.fit)}${f('Pad', it.pad)}
         ${f('Pocket', it.pocket)}${f('소재', it.material)}${f('종류', it.kind)}${f('상태', it.active ? '활성' : '비활성')}${f('ID', it.id)}${it.memo ? `<dt>메모</dt><dd class="wide">${esc(it.memo)}</dd>` : ''}
       </dl>
@@ -650,7 +651,7 @@ function redateUsage(uid) {
 }
 
 // ---------- 의류 추가/수정 ----------
-const FIELDS = [['brand', 'Brand'], ['hood', 'Hood'], ['length', 'Length'], ['fit', 'Fit'], ['pad', 'Pad'], ['pocket', 'Pocket'], ['material', '소재'], ['kind', '종류']];
+const FIELDS = [['brand', 'Brand'], ['model', 'Model'], ['hood', 'Hood'], ['length', 'Length'], ['fit', 'Fit'], ['pad', 'Pad'], ['pocket', 'Pocket'], ['material', '소재'], ['kind', '종류']];
 // 기존 값 목록 + "새로 입력" 선택 상자
 function combo(name, values, cur, { none = '— 없음 —', newLabel = '+ 새로 입력…' } = {}) {
   const list = [...new Set([...values, cur].filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -662,7 +663,7 @@ function editItem(id, gid) {
   if (isNew && !gid) gid = typeGroups()[0]?.id;
   if (isNew && !gid) return alert('먼저 설정에서 그룹을 만드세요.');
   const type = isNew ? groupById(gid).type : itemById(id).type;
-  const it = isNew ? { type, groupId: gid, active: true, tg: 2, nx: 'New', yr: new Date().getFullYear() % 100, brand: '', color: '', hood: '', length: '', fit: '', pad: '', pocket: '', material: '', kind: '', memo: '' } : { ...itemById(id) };
+  const it = isNew ? { type, groupId: gid, active: true, tg: 2, nx: 'New', yr: new Date().getFullYear() % 100, brand: '', color: '', model: '', hood: '', length: '', fit: '', pad: '', pocket: '', material: '', kind: '', memo: '' } : { ...itemById(id) };
   const vals = (k) => db.terms[k] || [];
   const groups = typeGroups(type);
   const html = `<h2>${isNew ? '의류 추가' : '의류 수정'}</h2><form class="form" id="f">
@@ -834,7 +835,7 @@ function viewCal(ym) {
 }
 
 // ---------- 설정 ----------
-const FIELD_LABEL = { brand: 'Brand', hood: 'Hood', length: 'Length', fit: 'Fit', pad: 'Pad', pocket: 'Pocket', material: '소재', kind: '종류' };
+const FIELD_LABEL = { brand: 'Brand', model: 'Model', hood: 'Hood', length: 'Length', fit: 'Fit', pad: 'Pad', pocket: 'Pocket', material: '소재', kind: '종류' };
 const openTerms = new Set();
 function viewSettings() {
   setTop({ title: '설정', seg: true });
@@ -1002,6 +1003,7 @@ function importXlsx() {
       nd.meta.lastBackup = db.meta.lastBackup;
       nd.meta.lastExportName = db.meta.lastExportName;
       normalizeGroups(nd); // 예전 엑셀의 줄임말 그룹명도 원어로
+      moveModels(nd); // 예전 엑셀은 Hood 칸에 모델명이 있음
       relinkSeasons(nd);
       db = nd;
       if (finals.length) { const keep = loadSnaps().filter((x) => !finals.some((f) => f.id === x.id)); saveSnaps([...keep, ...finals]); }

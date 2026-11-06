@@ -100,10 +100,23 @@ function seasonProgress(db, type, totalTg, today = todayStr()) {
   return { season: s, ratio, expected: Math.round(totalTg * ratio) };
 }
 
+// ---------- 모델명 ----------
+// 예전에는 모델명·특징 일부가 Hood 칸에 들어가 있었음 → 모델명 칸으로 옮김(사용자 결정 2026-11-06).
+// 칼라 모양(High Neck 등)과 Suit는 Hood에 남김. 모델명이 이미 있으면 건드리지 않음(여러 번 실행해도 같음)
+const HOOD_TO_MODEL = ['viewforth', 'powell', 'pea coat', 'packable', 'waist tied'];
+function moveModels(db) {
+  let n = 0;
+  for (const it of db.items) {
+    if (it.model == null) it.model = '';
+    if (!it.model && HOOD_TO_MODEL.includes(String(it.hood || '').trim().toLowerCase())) { it.model = it.hood; it.hood = ''; n++; }
+  }
+  return n;
+}
+
 // ---------- 엑셀 ----------
 const ITEM_COLS = [
   ['ID', 'id'], ['시즌구분', 'type'], ['그룹ID', 'groupId'], ['그룹', null], ['순서', 'order'], ['활성', 'active'],
-  ['Cur Us', null], ['Tg N.', 'tg'], ['NX', 'nx'], ['Yr', 'yr'], ['Brand', 'brand'], ['색상', 'color'],
+  ['Cur Us', null], ['Tg N.', 'tg'], ['NX', 'nx'], ['Yr', 'yr'], ['Brand', 'brand'], ['색상', 'color'], ['Model', 'model'],
   ['Hood', 'hood'], ['Length', 'length'], ['Fit', 'fit'], ['Pad', 'pad'], ['Pocket', 'pocket'],
   ['소재', 'material'], ['종류', 'kind'], ['메모', 'memo'], ['마지막사용일', null], ['이번시즌 사용일', null], ['착용예정', null],
 ];
@@ -240,7 +253,7 @@ function dbToWorkbook(XLSX, db, kind = '') { // kind: 최신본 / 시즌최종�
     XLSX.utils.book_append_sheet(wb, ws, name);
   };
   add('의류목록', items, ITEM_COLS.map((c) => c[0]),
-    [6, 6, 6, 10, 4, 4, 6, 5, 5, 4, 14, 14, 14, 13, 7, 11, 8, 10, 10, 12, 11, 24, 12]);
+    [6, 6, 6, 10, 4, 4, 6, 5, 5, 4, 14, 14, 14, 14, 13, 7, 11, 8, 10, 10, 12, 11, 24, 12]);
   for (const t of ['FW', 'SS']) add('사용기록' + t, usageRows(t), ['기록ID', '사용일', '구분', '의류ID', '메모'],
     [7, 11, 5, 6, 8, 16]);
   add('그룹', groups, ['ID', '시즌구분', '그룹명', '기온·추천월', '순서'], [5, 7, 12, 24, 5]);
@@ -332,5 +345,5 @@ function workbookToDb(XLSX, wb) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { countWindow, windowYear, seasonYear, seasonForDate, relinkSeasons, WINDOW_TEXT, todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
+  module.exports = { moveModels, HOOD_TO_MODEL, countWindow, windowYear, seasonYear, seasonForDate, relinkSeasons, WINDOW_TEXT, todayStr, addDays, daysBetween, weekday, normalizeGroups, normalizeSeasons, SEASON_STATUS, normalizeOrder, normalizeTerm, normalizeTerms, normalizeYr, syncTerms, TERM_FIELDS, TERMS_VERSION, seasonOf, itemStats, groupStats, seasonProgress, dbToWorkbook, workbookToDb };
 }

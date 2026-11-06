@@ -4,6 +4,7 @@ db = load();
 if (db.termsVersion !== TERMS_VERSION) normalizeTerms(db); // 표기 통일 (버전이 바뀔 때 한 번)
 normalizeOrder(db);
 normalizeGroups(db);
+moveModels(db); // Hood 칸에 있던 모델명(Viewforth·Powell·Pea Coat·Packable·Waist Tied) → 모델명 칸
 normalizeSeasons(db);
 pruneOld(); // 5년이 지난 기록·시즌 정리
 relinkSeasons(db); // 사용일의 시즌을 날짜로 (FW 8월~다음 해 6월, SS 3월~11월)

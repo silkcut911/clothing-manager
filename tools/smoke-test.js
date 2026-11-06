@@ -159,6 +159,28 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   });
   check('엑셀로 저장했다가 불러와도 같음 (+모든 최종본, 파일종류, 펼친 시트 없음)', rt.items && rt.usage && rt.finals && rt.kind === '최신본' && rt.noFinalSheets, JSON.stringify(rt));
 
+  // 10. 모델명: Hood에 있던 값 옮김, 카드(Length 자리)·전체표·엑셀에 보임, 예전 엑셀(모델명 열 없음)도 불러옴
+  const md = await page.evaluate(() => {
+    const by = (b, m) => db.items.find((i) => i.brand.startsWith(b) && i.model === m);
+    const moved = ['Viewforth', 'Powell', 'Pea Coat', 'Packable', 'Waist Tied'].every((m) => db.items.some((i) => i.model === m && !i.hood));
+    const kept = db.items.some((i) => i.hood === 'High Neck') && db.items.some((i) => i.hood === 'Suit');
+    const vf = by('Barbour', 'Viewforth');
+    const wb = dbToWorkbook(XLSX, db, '최신본');
+    const rt = workbookToDb(XLSX, XLSX.read(XLSX.write(wb, { type: 'array', bookType: 'xlsx' })));
+    // 예전 엑셀 흉내: 모델명 열을 빼고 Hood에 다시 넣음
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['의류목록']).map((r) => { const o = { ...r }; if (o['Model']) o['Hood'] = o['Model']; delete o['Model']; return o; });
+    wb.Sheets['의류목록'] = XLSX.utils.json_to_sheet(rows);
+    const old = workbookToDb(XLSX, XLSX.read(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))); moveModels(old);
+    return { moved, kept, id: vf && vf.id, group: vf && vf.groupId, rt: rt.items.find((i) => i.id === vf.id).model, old: old.items.find((i) => i.id === vf.id).model };
+  });
+  await page.goto(URL + '#/group/' + md.group); await wait(200);
+  const cardHasModel = await page.evaluate(() => document.querySelector('#app').innerText.includes('Viewforth') && ![...document.querySelectorAll('th')].some((t) => t.textContent.trim() === 'Length'));
+  await page.goto(URL + '#/'); await page.evaluate(() => { db.homeMode = 'table'; save(); render(); }); await wait(200);
+  const tableHasModel = await page.evaluate(() => [...document.querySelectorAll('table.sheet th')].map((t) => t.textContent).join(',').includes('색상,Model,Hood,Length'));
+  check('모델명: Hood에서 옮김(5개), High Neck·Suit는 Hood에 남음', md.moved && md.kept, JSON.stringify(md));
+  check('모델명: 카드 Length 자리에 보임, 전체표에 열 있음', cardHasModel && tableHasModel, `${cardHasModel} ${tableHasModel}`);
+  check('모델명: 엑셀 왕복, 예전 엑셀도 옮겨짐', md.rt === 'Viewforth' && md.old === 'Viewforth', JSON.stringify([md.rt, md.old]));
+
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));
   await browser.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });
