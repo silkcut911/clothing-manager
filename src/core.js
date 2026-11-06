@@ -116,7 +116,7 @@ function moveModels(db) {
 // ---------- 엑셀 ----------
 const ITEM_COLS = [
   ['ID', 'id'], ['시즌구분', 'type'], ['그룹ID', 'groupId'], ['그룹', null], ['순서', 'order'], ['활성', 'active'],
-  ['Cur Us', null], ['Tg N.', 'tg'], ['NX', 'nx'], ['Yr', 'yr'], ['Brand', 'brand'], ['색상', 'color'], ['Model', 'model'],
+  ['Cur Us', null], ['Tg N.', 'tg'], ['NX', 'nx'], ['Yr', 'yr'], ['Brand', 'brand'], ['Color', 'color'], ['Model', 'model'],
   ['Hood', 'hood'], ['Length', 'length'], ['Fit', 'fit'], ['Pad', 'pad'], ['Pocket', 'pocket'],
   ['소재', 'material'], ['종류', 'kind'], ['메모', 'memo'], ['마지막사용일', null], ['이번시즌 사용일', null], ['착용예정', null],
 ];
@@ -300,7 +300,7 @@ function workbookToDb(XLSX, wb) {
 
   const items = rows('의류목록').map((r) => {
     const it = {};
-    for (const [h, k] of ITEM_COLS) if (k) it[k] = str(r[h]);
+    for (const [h, k] of ITEM_COLS) if (k) it[k] = str(r[h] ?? (h === 'Color' ? r['색상'] : undefined)); // 예전 엑셀은 '색상' 열
     it.active = it.active.toUpperCase() !== 'N';
     it.tg = num(it.tg);
     it.order = num(it.order, null);

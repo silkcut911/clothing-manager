@@ -1,4 +1,6 @@
-# 의류관리 (Android 크롬용 단일 HTML)
+# Silk Wardrobe — 의류관리 (Android 크롬용 단일 HTML)
+
+앱 이름은 **Silk Wardrobe**입니다(홈 화면 맨 위에 `SILK WARDROBE`, 폰 홈 화면 아이콘 이름도 같음). 엑셀 파일 이름은 예전처럼 `의류관리_…`입니다.
 
 **사용 주소: https://silkcut911.github.io/clothing-manager/** (폰 크롬에서 열고 '홈 화면에 추가')
 

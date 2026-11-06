@@ -176,9 +176,18 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   await page.goto(URL + '#/group/' + md.group); await wait(200);
   const cardHasModel = await page.evaluate(() => document.querySelector('#app').innerText.includes('Viewforth') && ![...document.querySelectorAll('th')].some((t) => t.textContent.trim() === 'Length'));
   await page.goto(URL + '#/'); await page.evaluate(() => { db.homeMode = 'table'; save(); render(); }); await wait(200);
-  const tableHasModel = await page.evaluate(() => [...document.querySelectorAll('table.sheet th')].map((t) => t.textContent).join(',').includes('색상,Model,Hood,Length'));
+  const tableHasModel = await page.evaluate(() => [...document.querySelectorAll('table.sheet th')].map((t) => t.textContent).join(',').includes('Color,Model,Hood,Length'));
   check('모델명: Hood에서 옮김(5개), High Neck·Suit는 Hood에 남음', md.moved && md.kept, JSON.stringify(md));
   check('모델명: 카드 Length 자리에 보임, 전체표에 열 있음', cardHasModel && tableHasModel, `${cardHasModel} ${tableHasModel}`);
+  const brandTitle = await page.evaluate(() => { const h = document.querySelector('header.top h1'); return h.classList.contains('brand') && h.textContent === 'Silk Wardrobe' && document.title === 'Silk Wardrobe'; });
+  const oldColor = await page.evaluate(() => {
+    const wb = dbToWorkbook(XLSX, db, '최신본');
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['의류목록']).map((r) => { const o = { ...r, '색상': r['Color'] }; delete o['Color']; return o; });
+    wb.Sheets['의류목록'] = XLSX.utils.json_to_sheet(rows);
+    const nd = workbookToDb(XLSX, XLSX.read(XLSX.write(wb, { type: 'array', bookType: 'xlsx' })));
+    return nd.items.every((i) => i.color === db.items.find((x) => x.id === i.id).color);
+  });
+  check('앱 이름 Silk Wardrobe(대문자 제목), 예전 엑셀의 색상 열도 읽음', brandTitle && oldColor, `${brandTitle} ${oldColor}`);
   check('모델명: 엑셀 왕복, 예전 엑셀도 옮겨짐', md.rt === 'Viewforth' && md.old === 'Viewforth', JSON.stringify([md.rt, md.old]));
 
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));

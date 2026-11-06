@@ -1,6 +1,6 @@
 {
-  "name": "의류관리",
-  "short_name": "의류관리",
+  "name": "Silk Wardrobe",
+  "short_name": "Silk Wardrobe",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

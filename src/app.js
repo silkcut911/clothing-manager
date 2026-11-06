@@ -97,7 +97,7 @@ const specLine = (it) => [it.kind, it.hood, it.length, it.fit, it.pad, it.pocket
 // 칸 폭은 표가 내용에 맞춰 정하므로 단어 중간에서 줄이 바뀌지 않음
 // 윗줄(굵게): Brand · Pad · Hood · Type · Pocket / 아랫줄: 색상 · Fit · Material · 모델명 · Dates
 // (구입연도는 상세 화면에만. Length는 카드에서 숨김 — 옷 그림 모양으로 보이고, 상세·전체표·엑셀에는 있음)
-const COLS = [[['brand', 'Brand', 1], ['color', '색상']], [['pad', 'Pad', 1], ['fit', 'Fit']], [['hood', 'Hood', 1], ['material', 'Material']], [['kind', 'Type', 1], ['model', 'Model']], [['pocket', 'Pocket'], ['dates', 'Dates']]];
+const COLS = [[['brand', 'Brand', 1], ['color', 'Color']], [['pad', 'Pad', 1], ['fit', 'Fit']], [['hood', 'Hood', 1], ['material', 'Material']], [['kind', 'Type', 1], ['model', 'Model']], [['pocket', 'Pocket'], ['dates', 'Dates']]];
 // 사용일 짧게: 같은 달이면 월은 처음 한 번만 (9/16,21 · 9/30,10/1,6). 예정일은 빨간색, 누르면 예정일 창
 function shortDates(list) {
   let pm = '';
@@ -346,10 +346,10 @@ document.addEventListener('click', (e) => {
 function go(hash) { location.hash = hash; }
 window.addEventListener('hashchange', render);
 
-function setTop({ title, back, seg }) {
+function setTop({ title, back, seg, brand }) {
   $top.innerHTML =
     (back ? '<button class="back" id="backBtn" aria-label="뒤로">‹</button>' : '') +
-    `<h1>${esc(title)}</h1>` +
+    `<h1${brand ? ' class="brand"' : ''}>${esc(title)}</h1>` +
     (seg ? `<div class="seg">${['FW', 'SS'].map((t) => `<button data-t="${t}" class="${db.viewType === t ? 'on' : ''}">${t}</button>`).join('')}</div>` : '');
   if (back) document.getElementById('backBtn').onclick = () => (history.length > 1 ? history.back() : go('#/'));
   $top.querySelectorAll('.seg button').forEach((b) => (b.onclick = () => { db.viewType = b.dataset.t; save(); render(); }));
@@ -369,7 +369,7 @@ function render() {
 
 // ---------- 홈 ----------
 function viewHome() {
-  setTop({ title: '의류관리', seg: true });
+  setTop({ title: 'Silk Wardrobe', seg: true, brand: true }); // 앱 이름: 대문자 + 넓은 자간(사용자 결정 C안)
   setNav('home');
   const type = db.viewType;
   const groups = typeGroups(type);
@@ -446,7 +446,7 @@ function viewHome() {
 }
 // 출력물과 같은 형식의 전체 표: 그룹 머리줄(집계) + 의류 행(옷 색으로 칠함) + 사용일 열
 function homeTable(groups) {
-  const cols = ['Cur', 'Tg', 'NX', 'Yr', 'Brand', '색상', 'Model', 'Hood', 'Length', 'Fit', 'Pad', 'Pocket', 'Material', 'Type', '달성', 'Dates'];
+  const cols = ['Cur', 'Tg', 'NX', 'Yr', 'Brand', 'Color', 'Model', 'Hood', 'Length', 'Fit', 'Pad', 'Pocket', 'Material', 'Type', '달성', 'Dates'];
   let t = `<div class="tblwrap"><table class="sheet"><thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>`;
   for (const g of groups) {
     const items = groupItems(g.id);
@@ -605,7 +605,7 @@ function viewItem(id) {
     <div class="card">
       <div class="row" style="margin-bottom:8px"><div class="title grow">상세 정보</div><button class="btn sm" id="editBtn">수정</button></div>
       <dl class="kv kv2">
-        ${f('그룹', g?.name)}${f('Brand', it.brand)}${f('색상', it.color)}${f('Model', it.model)}${f('Yr', yr2(it.yr))}${f('NX', it.nx === 'Ex' ? 'Ex (처분예정)' : it.nx)}
+        ${f('그룹', g?.name)}${f('Brand', it.brand)}${f('Color', it.color)}${f('Model', it.model)}${f('Yr', yr2(it.yr))}${f('NX', it.nx === 'Ex' ? 'Ex (처분예정)' : it.nx)}
         ${f('Tg N.', it.tg)}${f('Hood', it.hood)}${f('Length', it.length)}${f('Fit', it.fit)}${f('Pad', it.pad)}
         ${f('Pocket', it.pocket)}${f('소재', it.material)}${f('종류', it.kind)}${f('상태', it.active ? '활성' : '비활성')}${f('ID', it.id)}${it.memo ? `<dt>메모</dt><dd class="wide">${esc(it.memo)}</dd>` : ''}
       </dl>
@@ -673,7 +673,7 @@ function editItem(id, gid) {
       <div><label>상태</label><select name="active"><option value="1" ${it.active ? 'selected' : ''}>활성</option><option value="0" ${!it.active ? 'selected' : ''}>비활성</option></select></div>
     </div>
     <label>Brand *</label>${combo('brand', vals('brand'), it.brand, { none: '— 선택 —' })}
-    <label>색상 *</label>
+    <label>Color *</label>
     <input type="hidden" name="color" value="${esc(db.colors.find((c) => c.name === it.color) ? it.color : '')}">
     <div class="cpick">${sortColors([...db.colors]).map((c) => `<button type="button" class="cp ${c.name === it.color ? 'on' : ''}" data-c="${esc(c.name)}"><i style="background:${esc(c.hex)}"></i>${esc(c.name)}</button>`).join('')}<button type="button" class="cp" data-c="__new">+ 새 색상…</button></div>
     <div class="row" id="newHexRow" hidden style="margin-top:6px"><input type="color" name="color__hex" value="#888888" style="width:52px;height:38px;padding:2px;flex:none"><input name="color__new" placeholder="새 색상 이름 (예: Camel)"></div>
