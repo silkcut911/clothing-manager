@@ -21,6 +21,7 @@ function load() {
 }
 function save() {
   syncTerms(db);
+  normalizeDailyChecks(db);
   keepPrevVersion(lastSavedJson);
   db.meta.updated = new Date().toISOString();
   sortColors(db.colors);
@@ -361,12 +362,60 @@ function setNav(active) {
 function render() {
   document.querySelector('.fab')?.remove();
   const [, view, arg] = (location.hash || '#/').split('/');
-  const views = { '': viewHome, group: viewGroup, item: viewItem, day: viewDay, cal: viewCal, settings: viewSettings, end: viewEnd, past: viewPast };
+  const views = { '': viewHome, group: viewGroup, item: viewItem, day: viewDay, checks: viewWearChecks, cal: viewCal, settings: viewSettings, end: viewEnd, past: viewPast };
   (views[view] || viewHome)(arg ? decodeURIComponent(arg) : undefined);
-  window.scrollTo(0, 0);
+  window.scrollTo(0, !view && homeSearch.active ? homeSearch.scrollY : 0);
 }
 
 // ---------- 홈 ----------
+// 검색은 화면 상태로만 유지하며 새로 열면 초기화한다.
+const homeSearch = { active: false, query: '', scope: 'current', scrollY: 0 };
+window.addEventListener('scroll', () => {
+  if (homeSearch.active && (location.hash || '#/') === '#/') homeSearch.scrollY = scrollY;
+});
+function searchItems(query, scope = homeSearch.scope) {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return db.items.filter((it) => {
+    if (scope !== 'all' && it.type !== db.viewType) return false;
+    const fields = ['brand', 'color', 'model', 'kind', 'material', 'hood', 'length', 'fit', 'pad', 'pocket', 'memo'];
+    const text = [...fields.map((f) => it[f] || ''), groupById(it.groupId)?.name || ''].join(' ').toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+function updateSearchResults() {
+  const target = document.getElementById('searchResults');
+  if (!target) return;
+  if (!homeSearch.query.trim()) {
+    target.innerHTML = '<div class="empty">브랜드, 색상, 모델명 등으로 의류를 검색하세요.</div>'; return;
+  }
+  const found = searchItems(homeSearch.query);
+  let h = `<div class="section-t" role="status">검색 결과 ${found.length}벌</div>`;
+  if (!found.length) h += '<div class="empty">검색 결과가 없습니다.</div>';
+  for (const type of ['FW', 'SS']) for (const group of typeGroups(type)) {
+    const items = found.filter((it) => it.groupId === group.id).sort((a, b) => a.order - b.order);
+    if (!items.length) continue;
+    h += `<div class="section-t">${type} · ${esc(group.name)} <span class="muted">${items.length}벌</span></div>` +
+      itemTable(items, { rowAttr: (it) => `data-search-item="${esc(it.id)}"`, rowClass: (it) => it.active ? '' : 'off',
+        right: (it) => { const s = itemStats(db, it); return `${s.cur}/${it.tg}`; } });
+  }
+  target.innerHTML = h;
+  target.querySelectorAll('[data-search-item]').forEach((row) => (row.onclick = () => {
+    homeSearch.scrollY = scrollY; go('#/item/' + row.dataset.searchItem);
+  }));
+}
+function bindHomeSearch() {
+  const input = document.getElementById('clothesSearch');
+  if (!input) return;
+  const update = () => { homeSearch.query = input.value; updateSearchResults(); };
+  input.addEventListener('input', (e) => { if (!e.isComposing) update(); });
+  input.addEventListener('compositionend', update);
+  document.getElementById('searchScope').onchange = (e) => { homeSearch.scope = e.target.value; updateSearchResults(); };
+  document.getElementById('clearSearch').onclick = () => {
+    homeSearch.query = ''; homeSearch.active = false; homeSearch.scrollY = 0; render();
+  };
+  updateSearchResults();
+}
 function viewHome() {
   setTop({ title: 'Silk Wardrobe', seg: true, brand: true }); // 앱 이름: 대문자 + 넓은 자간(사용자 결정 C안)
   setNav('home');
@@ -377,6 +426,8 @@ function viewHome() {
   const prog = seasonProgress(db, type, tot.tg);
   // 순서: 자동저장 경고 → 착용예정 → 그룹별/전체 표 → 시즌 통계 → 백업 알림
   let h = banners('top');
+  const missing = missingWearDays(db);
+  if (missing.length) h += `<button class="missing-wear" id="missingWear" aria-label="착용정보 미입력 ${missing.length}일. 미확인 날짜 전체 보기"><span id="missingWearText"></span></button>`;
   let stats = '';
   if (!prog) {
     h += `<div class="card"><div class="title">${type} 진행중인 시즌이 없습니다</div><p class="muted">설정 → ${type} 시즌에서 새 시즌을 만들고 시작하세요. 지난 시즌은 [지난 시즌 보기]로 볼 수 있습니다.</p><a class="btn pri" href="#/settings">설정으로</a></div>`;
@@ -408,10 +459,15 @@ function viewHome() {
 
   h += lastYearHtml(todayStr(), type, '작년 오늘');
 
-  const mode = db.homeMode === 'table' ? 'table' : 'group';
-  h += `<div class="row" style="margin:14px 2px 6px"><span class="section-t grow" style="margin:0">${mode === 'table' ? '전체 표' : '그룹'}</span>
-    <div class="seg2 sm"><button data-mode="group" class="${mode === 'group' ? 'on' : ''}">그룹별</button><button data-mode="table" class="${mode === 'table' ? 'on' : ''}">전체 표</button></div></div>`;
-  if (mode === 'table') h += homeTable(groups);
+  const mode = homeSearch.active ? 'search' : db.homeMode === 'table' ? 'table' : 'group';
+  h += `<div class="row" style="margin:14px 2px 6px"><span class="section-t grow" style="margin:0">${mode === 'search' ? '의류 검색' : mode === 'table' ? '전체 표' : '그룹'}</span>
+    <div class="seg2 sm"><button data-mode="group" class="${mode === 'group' ? 'on' : ''}">그룹별</button><button data-mode="table" class="${mode === 'table' ? 'on' : ''}">전체 표</button></div>
+    <button data-mode="search" class="btn sm${mode === 'search' ? ' pri' : ''}" aria-pressed="${mode === 'search'}" style="margin-left:8px">검색</button></div>`;
+  if (mode === 'search') h += `<div class="card form">
+    <label for="clothesSearch">의류 검색</label><input id="clothesSearch" type="search" value="${esc(homeSearch.query)}" placeholder="예: Barbour Navy" autocomplete="off" aria-controls="searchResults">
+    <div class="row" style="margin-top:8px"><select id="searchScope" aria-label="검색 범위" style="flex:1"><option value="current" ${homeSearch.scope === 'current' ? 'selected' : ''}>현재 ${type}</option><option value="all" ${homeSearch.scope === 'all' ? 'selected' : ''}>FW·SS 전체</option></select><button class="btn sm" id="clearSearch">검색 초기화</button></div>
+    <div class="muted" style="margin-top:6px">여러 단어를 입력하면 모두 포함된 의류를 찾습니다. 비활성 의류도 포함합니다.</div></div><div id="searchResults"></div>`;
+  else if (mode === 'table') h += homeTable(groups);
   else {
     for (const g of groups) {
       const items = groupItems(g.id);
@@ -428,8 +484,16 @@ function viewHome() {
   if (lastFinal) stats += `<button class="btn block" onclick="go('#/past/${lastFinal.id}')" style="margin-bottom:10px">지난 시즌 보기 (${esc(lastFinal.seasonName)})</button>`;
   h += stats + banners('bottom');
   $app.innerHTML = h;
+  document.getElementById('missingWear')?.addEventListener('click', () => go('#/checks'));
+  fitMissingWearSummary();
   $app.querySelectorAll('[data-g]').forEach((b) => (b.onclick = () => go('#/group/' + b.dataset.g)));
-  $app.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { db.homeMode = b.dataset.mode; save(); render(); }));
+  $app.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => {
+    homeSearch.active = b.dataset.mode === 'search'; homeSearch.scrollY = 0;
+    if (!homeSearch.active) { db.homeMode = b.dataset.mode; save(); }
+    render();
+    if (homeSearch.active) { document.getElementById('clothesSearch').focus(); document.getElementById('clothesSearch').scrollIntoView({ block: 'center' }); }
+  }));
+  bindHomeSearch();
   $app.querySelectorAll('tr[data-i]').forEach((tr) => (tr.onclick = (e) => {
     const dm = e.target.closest('[data-dm]');
     dm ? manageDates(dm.dataset.dm) : go('#/item/' + tr.dataset.i);
@@ -757,6 +821,48 @@ function newColorPrompt() {
 }
 
 // ---------- 날짜별 기록 ----------
+// 날짜가 비어 있는 것과 사용자가 착용하지 않았다고 확인한 것을 구분한다.
+function fitMissingWearSummary() {
+  const text = document.getElementById('missingWearText');
+  if (!text) return;
+  const days = missingWearDays(db).reverse();
+  let count = Math.min(8, days.length);
+  do {
+    text.textContent = `착용정보 미입력: ${days.slice(0, count).map(md).join(', ')}${count < days.length ? ` … 등 총 ${days.length}일` : ''}`;
+    if (text.scrollWidth <= text.clientWidth || !count) break;
+    count--;
+  } while (count >= 0);
+}
+window.addEventListener('resize', fitMissingWearSummary);
+function editWearCheckStart() {
+  modal(`<h2>착용 확인 시작일</h2><form class="form" id="wearStartForm">
+    <label for="wearStartDate">시작일</label><input id="wearStartDate" type="date" value="${db.dailyChecks.start}" min="${addDays(todayStr(), -365 * 5)}" max="${todayStr()}" required>
+    <p class="muted">이 날짜부터 오늘까지 FW·SS 전체의 미확인 날짜를 알려줍니다. 기록과 없음 확인은 5년간 보관합니다.</p>
+    <div class="row"><span class="grow"></span><button type="button" class="btn" id="cancel">취소</button><button class="btn pri">저장</button></div></form>`, (m, close) => {
+    m.querySelector('#cancel').onclick = close;
+    m.querySelector('#wearStartForm').onsubmit = (e) => {
+      e.preventDefault();
+      const start = m.querySelector('#wearStartDate').value;
+      if (!validDay(start) || start > todayStr() || start < addDays(todayStr(), -365 * 5)) return;
+      db.dailyChecks.start = start; save(); close(); render();
+    };
+  });
+}
+function viewWearChecks() {
+  setTop({ title: '착용 확인', back: true }); setNav('day');
+  const days = missingWearDays(db).reverse();
+  $app.innerHTML = `<div class="card"><div class="row"><span class="grow">확인 시작일: ${db.dailyChecks.start}</span><button class="btn sm" id="wearStartEdit">변경</button></div><p class="muted">오늘까지 FW·SS 전체에서 실제 착용 기록이나 ‘착용 의류 없음’ 확인이 없는 날짜입니다. 날짜를 눌러 확인하세요.</p></div>
+    <div class="section-t">착용정보 미입력 ${days.length}일</div><div class="card">${days.length ? days.map((d) => `<a class="list-date" href="#/day/${d}"><span class="grow">${d} (${weekday(d)})${d === todayStr() ? ' · 오늘' : ''}</span><span>입력 / 확인 ›</span></a>`).join('') : '<div class="muted">미확인 날짜가 없습니다.</div>'}</div>`;
+  document.getElementById('wearStartEdit').onclick = editWearCheckStart;
+}
+function markNoWear(date) {
+  if (!validDay(date) || date > todayStr() || date < addDays(todayStr(), -365 * 5)) return;
+  const records = db.usage.filter((u) => u.date === date);
+  if (records.some((u) => !u.planned)) return alert('실제 착용 기록이 있는 날입니다. 착용 의류 없음으로 확인할 수 없습니다.');
+  if (records.some((u) => u.planned)) return alert('착용예정이 남아 있습니다. 먼저 실제 착용 확정·예정 변경·삭제를 해주세요.');
+  if (!confirm(`${date}에 등록된 의류를 착용하지 않았음을 확인할까요?`)) return;
+  db.dailyChecks.none.push(date); save(); render();
+}
 let pickGroup = null;
 function viewDay(date) {
   date = date || todayStr();
@@ -773,7 +879,12 @@ function viewDay(date) {
       <input type="date" id="dt" value="${date}" style="flex:1;text-align:center">
       <button class="btn" id="next">›</button></div>
       <div class="muted" style="text-align:center;margin-top:6px">${weekday(date)}요일 ${label ? `· <b>${label}</b>` : ''}${date !== todayStr() ? ' · <a href="#/day">오늘로</a>' : ''}</div></div>
-    <div class="section-t">${md(date)} 기록 (${recs.length})</div>`;
+    `;
+  if (!isFuture && date >= addDays(todayStr(), -365 * 5)) {
+    const noWear = db.dailyChecks.none.includes(date), real = recs.some(({ u }) => !u.planned), planned = recs.some(({ u }) => u.planned);
+    h += `<div class="card" id="wearDayStatus"><div class="row"><span class="grow">${noWear ? '착용 의류 없음 · 확인 완료' : real ? '실제 착용 기록 있음' : '착용정보 확인 필요'}</span>${noWear ? '<button class="btn sm" id="noWearCancel">확인 취소</button>' : `<button class="btn sm" id="noWearConfirm" ${real || planned ? 'disabled' : ''}>착용 의류 없음</button>`}</div>${planned ? '<div class="muted" style="margin-top:6px">착용예정은 실제 착용 확정·예정 변경·삭제로 먼저 처리하세요.</div>' : ''}</div>`;
+  }
+  h += `<div class="section-t">${md(date)} 기록 (${recs.length})</div>`;
   h += recs.length ? `<div class="clist">` + itemTable(recs, {
     rowAttr: (it) => `data-i="${it.id}"`,
     sub: (it, { u }) => (u.planned ? '<span class="badge b-plan" style="margin:0 4px 0 0">계획</span>' : '<span class="badge b-new" style="margin:0 4px 0 0">실제</span>') +
@@ -795,6 +906,10 @@ function viewDay(date) {
   document.getElementById('prev').onclick = () => to(addDays(date, -1));
   document.getElementById('next').onclick = () => to(addDays(date, 1));
   document.getElementById('dt').onchange = (e) => e.target.value && to(e.target.value);
+  document.getElementById('noWearConfirm')?.addEventListener('click', () => markNoWear(date));
+  document.getElementById('noWearCancel')?.addEventListener('click', () => {
+    db.dailyChecks.none = db.dailyChecks.none.filter((d) => d !== date); save(); render();
+  });
   $app.querySelectorAll('[data-pg]').forEach((b) => (b.onclick = () => { pickGroup = b.dataset.pg; render(); }));
   $app.querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => askUsage(b.dataset.add, date)));
   $app.querySelectorAll('tr[data-i]').forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest('[data-del]')) go('#/item/' + tr.dataset.i); }));
@@ -853,7 +968,7 @@ function viewSettings() {
       <div class="muted" style="margin-top:8px">마지막 최신본: ${db.meta.lastExportName ? `<b>${esc(db.meta.lastExportName)}</b>` : '없음'}</div>
       <div class="muted" style="margin-top:4px">마지막 백업: ${db.meta.lastBackup ? db.meta.lastBackup.slice(0, 16).replace('T', ' ') : '없음'} · 자동저장: ${storageOK ? '사용 중' : '<b style="color:var(--bad)">불가 — 엑셀 저장 필수</b>'}</div>
       <div class="muted" style="margin-top:4px">구글드라이브·카톡으로 보내기: 엑셀로 저장 후 <b>내 파일 → 다운로드</b>에서 파일을 길게 눌러 <b>공유</b></div>
-    </div>` + versionSectionHtml() + seasonSectionHtml(type);
+    </div><div class="section-t">착용 확인</div><div class="card"><div class="row"><span class="grow">확인 시작일: ${db.dailyChecks.start}</span><button class="btn sm" id="wearStartEdit">변경</button></div><a class="btn block" href="#/checks" style="margin-top:8px">미확인 날짜 보기 (${missingWearDays(db).length}일)</a></div>` + versionSectionHtml() + seasonSectionHtml(type);
   h += `<div class="section-t">${type} 그룹</div><div class="card">` +
     groups.map((g, i) => `<div class="list-date"><span class="grow"><b>${esc(g.name)}</b> <span class="muted">${tempLabel(g)} · ${groupItems(g.id).length}벌</span></span>
       <button class="btn sm" data-gm="${g.id}" data-d="-1" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -862,7 +977,7 @@ function viewSettings() {
     `<button class="btn block" id="gAdd" style="margin-top:8px">+ 그룹 추가</button>
     <div class="muted" style="margin-top:6px">↑↓로 순서 변경 · 수정에서 이름, 기온·추천월, 삭제</div></div>
     <div class="section-t">속성 값</div><div class="card">
-      <div class="muted" style="margin-bottom:6px">의류 추가/수정에서 고르는 값 목록입니다. 쓰는 의류가 없는 값(0벌)만 삭제할 수 있습니다.</div>` +
+      <div class="muted" style="margin-bottom:6px">의류 추가/수정에서 고르는 값 목록입니다. 수정하면 FW·SS의 해당 의류도 함께 바뀝니다. 쓰는 의류가 없는 값(0벌)만 삭제할 수 있습니다.</div>` +
     TERM_FIELDS.map((f) => {
       const list = [...(db.terms[f] || [])].sort((a, b) => a.localeCompare(b));
       const nUse = (v) => db.items.filter((x) => x[f] === v).length;
@@ -871,7 +986,7 @@ function viewSettings() {
         (f === 'hood' ? '<div class="muted" style="margin:4px 0">오른쪽에서 옷 그림의 목 모양(후드 / 칼라 / 일반)을 고릅니다. 새 값은 일반입니다.</div>' : '') +
         list.map((v) => { const n = nUse(v); return `<div class="list-date"><span class="grow">${esc(v)} <span class="muted">${n}벌</span></span>` +
           (f === 'hood' ? `<select data-nk="${esc(v)}" style="width:auto;padding:4px 6px">${Object.entries(NECK_NAME).map(([k, t]) => `<option value="${k}" ${(db.neck[neckKey(v)] || 'plain') === k ? 'selected' : ''}>${t}</option>`).join('')}</select>` : '') +
-          `${n ? '' : `<button class="btn sm danger" data-td="${f}" data-v="${esc(v)}">삭제</button>`}</div>`; }).join('') +
+          `<button class="btn sm" data-te="${f}" data-v="${esc(v)}">수정</button>${n ? '' : `<button class="btn sm danger" data-td="${f}" data-v="${esc(v)}">삭제</button>`}</div>`; }).join('') +
         `</details>`;
     }).join('') + `</div>
     <div class="section-t">색상 (${db.colors.length})</div><div class="card">` +
@@ -887,6 +1002,7 @@ function viewSettings() {
   bindBanners();
   document.getElementById('exp').onclick = exportXlsx;
   document.getElementById('imp').onclick = importXlsx;
+  document.getElementById('wearStartEdit').onclick = editWearCheckStart;
   bindSeasonSection(type);
   bindVersionSection();
   $app.querySelectorAll('[data-gm]').forEach((b) => (b.onclick = () => {
@@ -897,6 +1013,7 @@ function viewSettings() {
     save(); render();
   }));
   $app.querySelectorAll('details[data-tf]').forEach((d) => d.addEventListener('toggle', () => { d.open ? openTerms.add(d.dataset.tf) : openTerms.delete(d.dataset.tf); }));
+  $app.querySelectorAll('[data-te]').forEach((b) => (b.onclick = () => editTerm(b.dataset.te, b.dataset.v)));
   // Hood 값의 옷 그림 목 모양: 고르면 그 값을 쓰는 옷 그림이 모두 바뀜
   $app.querySelectorAll('[data-nk]').forEach((s) => (s.onchange = () => {
     const k = neckKey(s.dataset.nk);
@@ -928,6 +1045,48 @@ function viewSettings() {
     if (!confirm('정말 되돌릴까요? 되돌릴 수 없습니다.')) return;
     db = buildSeedDB(); normalizeGroups(db); ensureNeck(db); moveModels(db); save(); render();
   };
+}
+
+// 속성 값 이름과 이를 쓰는 현재본의 의류를 함께 변경
+function editTerm(field, oldValue) {
+  const count = db.items.filter((it) => it[field] === oldValue).length;
+  const y = scrollY;
+  openTerms.add(field);
+  modal(`<h2>${esc(FIELD_LABEL[field])} 값 수정</h2><form class="form" id="termEdit">
+    <label>기존 값</label><div>${esc(oldValue)}</div>
+    <label>새 이름</label><input name="value" value="${esc(oldValue)}" required>
+    <div class="muted" id="termPreview" style="margin-top:6px"></div>
+    <p>이 값을 사용하는 의류 <b>${count}벌</b>도 함께 변경됩니다.<br><span class="muted">FW·SS와 비활성 의류를 포함합니다. 지난 시즌 최종본은 당시 표기를 유지합니다.</span></p>
+    <div id="termError" role="alert" style="color:var(--bad)"></div>
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button type="button" class="btn" id="cancel">취소</button><button class="btn pri">저장</button></div>
+    </form>`, (m, close) => {
+    const form = m.querySelector('#termEdit'), input = form.elements.namedItem('value');
+    const preview = m.querySelector('#termPreview'), error = m.querySelector('#termError');
+    const update = () => { preview.textContent = '저장될 이름: ' + normalizeTerm(field, input.value); error.textContent = ''; };
+    input.oninput = update;
+    update();
+    m.querySelector('#cancel').onclick = close;
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const value = normalizeTerm(field, input.value);
+      if (!value) { error.textContent = '새 이름을 입력하세요.'; return; }
+      if (value === oldValue) { close(); return; }
+      const key = (v) => normalizeTerm(field, v).toLowerCase();
+      if ((db.terms[field] || []).some((v) => v !== oldValue && key(v) === key(value))) {
+        error.textContent = '이미 있는 이름입니다. 다른 이름을 입력하세요.'; return;
+      }
+      if (field === 'hood') {
+        const oldKey = neckKey(oldValue), newKey = neckKey(value);
+        const shape = db.neck[oldKey] || 'plain';
+        if (oldKey !== newKey) delete db.neck[oldKey];
+        if (shape === 'plain') delete db.neck[newKey]; else db.neck[newKey] = shape;
+      }
+      db.terms[field] = db.terms[field].map((v) => v === oldValue ? value : v);
+      db.items.forEach((it) => { if (it[field] === oldValue) it[field] = value; });
+      save(); close(); render(); window.scrollTo(0, y);
+      toast(`${oldValue} → ${value} · ${count}벌 변경됨`);
+    };
+  });
 }
 
 function editGroup(gid) {

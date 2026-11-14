@@ -227,6 +227,175 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   check('목 모양 설정: 바꾸면 그림 바뀜, 엑셀 왕복 유지, 새 값은 일반, 설정에 선택 칸', nk.before.endsWith('-plain') && nk.after.endsWith('-collar') && nk.kept && nk.fresh === 'medium-plain' && sel > 5, JSON.stringify({ ...nk, sel }));
   check('옷 그림: 길이 × 목(후드·칼라·일반) 규칙, 모든 옷의 그림 있음', shp.cases.every(Boolean) && shp.all, JSON.stringify(shp));
 
+  // 속성 값 수정: 실제 수정 폼으로 모든 필드, FW·SS·비활성, 중복 검사와 복원 확인
+  await page.goto(URL + '#/settings'); await wait(200);
+  const termEdit = await page.evaluate(() => {
+    const original = JSON.stringify(db), finals = localStorage.getItem(SNAP_KEY);
+    const results = [];
+    const submit = (value) => {
+      const form = document.querySelector('#termEdit');
+      form.elements.namedItem('value').value = value;
+      form.elements.namedItem('value').dispatchEvent(new Event('input'));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    };
+    for (const field of TERM_FIELDS) {
+      const before = 'Test Old', after = normalizeTerm(field, 'test new');
+      db.terms[field].push(before, normalizeTerm(field, 'Test Existing'));
+      const fixtures = ['FW', 'SS'].map((type, index) => ({ ...db.items[0], id: 'TEST' + index, type, active: !index, [field]: before }));
+      db.items.push(...fixtures);
+      if (field === 'hood') db.neck[neckKey(before)] = 'collar';
+      render();
+      document.querySelector(`details[data-tf="${field}"]`).open = true;
+      document.querySelector(`[data-te="${field}"][data-v="${before}"]`).click();
+      submit('   ');
+      const blankBlocked = !!document.querySelector('#termEdit') && fixtures.every((it) => it[field] === before);
+      submit('test existing');
+      const duplicateBlocked = !!document.querySelector('#termEdit') && !!document.querySelector('#termError').textContent;
+      submit('test new');
+      const renamed = fixtures.every((it) => it[field] === after) && !db.terms[field].includes(before) && db.terms[field].includes(after);
+      const opened = document.querySelector(`details[data-tf="${field}"]`).open;
+      const hood = field !== 'hood' || (db.neck[neckKey(after)] === 'collar' && !db.neck[neckKey(before)]);
+      const restored = workbookToDb(XLSX, XLSX.read(XLSX.write(dbToWorkbook(XLSX, db), { type: 'array', bookType: 'xlsx' })));
+      const excel = restored.items.filter((it) => it.id.startsWith('TEST')).every((it) => it[field] === after) && restored.terms[field].includes(after) && (field !== 'hood' || restored.neck[neckKey(after)] === 'collar');
+      results.push({ field, blankBlocked, duplicateBlocked, renamed, opened, hood, excel });
+      db = JSON.parse(original);
+    }
+    const finalsUnchanged = localStorage.getItem(SNAP_KEY) === finals;
+    // 미사용 값 수정과 취소도 확인
+    db.terms.fit.push('Unused Test'); render();
+    editTerm('fit', 'Unused Test'); submit('Unused New');
+    const unused = db.terms.fit.includes('Unused New') && !db.terms.fit.includes('Unused Test');
+    editTerm('fit', 'Unused New'); document.querySelector('.modal #cancel').click();
+    const cancel = db.terms.fit.includes('Unused New') && !document.querySelector('#termEdit');
+    db = JSON.parse(original); save(); render();
+    return { results, finalsUnchanged, unused, cancel };
+  });
+  check('속성 이름 수정: 전체 필드·FW/SS·비활성·입력 검사·Hood·엑셀·최종본 유지', termEdit.results.every((r) => Object.entries(r).every(([k, v]) => k === 'field' || v)) && termEdit.finalsUnchanged && termEdit.unused && termEdit.cancel, JSON.stringify(termEdit));
+  await page.evaluate(() => { document.querySelector('.toast')?.remove(); document.querySelector('details[data-tf="hood"]').open = true; });
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/term-edit-settings-384.png'), fullPage: true });
+  await click('[data-te="hood"]');
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/term-edit-dialog-384.png') });
+  await click('.modal #cancel');
+  await page.evaluate(() => {
+    db.terms.fit.push('Reload Old'); save(); render(); editTerm('fit', 'Reload Old');
+    const form = document.querySelector('#termEdit');
+    form.elements.namedItem('value').value = 'Reload New'; form.requestSubmit();
+  });
+  await page.reload(); await wait(200);
+  check('속성 수정 후 새로고침에도 새 이름 유지', await page.evaluate(() => db.terms.fit.includes('Reload New') && !db.terms.fit.includes('Reload Old')));
+  await page.evaluate(() => { db.terms.fit = db.terms.fit.filter((v) => v !== 'Reload New'); save(); });
+
+  // 검색 버튼에서 실제 입력·범위 변경·상세 복귀·한글 조합을 확인한다.
+  const searchDb = await page.evaluate(() => {
+    const original = JSON.stringify(db);
+    for (const [index, type] of ['FW', 'SS'].entries()) db.items.push({ ...db.items[0], id: 'SEARCH' + index, type,
+      groupId: typeGroups(type)[0].id, brand: 'SearchBrand', color: 'Navy', model: 'Search Model', memo: '검색테스트 <img src=x>', active: !index });
+    db.viewType = 'FW'; db.homeMode = 'group'; save(); return original;
+  });
+  await page.goto(URL + '#/'); await wait(100); await click('[data-mode="search"]');
+  const searchInput = async (value) => page.evaluate((v) => {
+    const input = document.querySelector('#clothesSearch'); input.value = v;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return [...document.querySelectorAll('[data-search-item]')].map((r) => r.dataset.searchItem);
+  }, value);
+  const currentHits = await searchInput('sEaRcHbRaNd navy');
+  check('검색: 대소문자·다중 단어·현재 구분', JSON.stringify(currentHits) === JSON.stringify(['SEARCH0']));
+  await page.evaluate(() => { const select = document.querySelector('#searchScope'); select.value = 'all'; select.dispatchEvent(new Event('change')); });
+  check('검색: 전체 구분·비활성 포함', await page.evaluate(() => document.querySelectorAll('[data-search-item]').length === 2 && document.querySelector('[data-search-item="SEARCH1"]').classList.contains('off')));
+  check('검색: Model·메모·한글 및 HTML 안전 표시', (await searchInput('model 검색테스트')).length === 2 && await page.evaluate(() => !document.querySelector('#searchResults img')));
+  check('검색: 결과 없음', (await searchInput('nothing-found-123')).length === 0 && await page.evaluate(() => document.querySelector('#searchResults').textContent.includes('검색 결과가 없습니다')));
+  await searchInput('검색테스트');
+  const composing = await page.evaluate(() => {
+    const input = document.querySelector('#clothesSearch'); input.focus(); input.value = '조합중';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
+    const held = document.querySelectorAll('[data-search-item]').length === 2 && document.activeElement === input;
+    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    return held && !document.querySelector('[data-search-item]') && document.activeElement === input;
+  });
+  check('검색: 한글 조합 중 초점·결과 유지, 조합 후 갱신', composing);
+  await searchInput('SearchBrand Navy');
+  await page.evaluate(() => document.querySelector('#clothesSearch').scrollIntoView({ block: 'start' })); await wait(100);
+  const searchY = await page.evaluate(() => scrollY);
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/clothes-search-384.png') });
+  check('검색: 384px 가로 넘침 없음', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await click('[data-search-item="SEARCH1"]'); await wait(100);
+  check('검색 결과 → 의류 상세', await page.evaluate(() => location.hash === '#/item/SEARCH1'));
+  await page.goBack(); await wait(150);
+  check('검색: 상세 복귀 시 검색어·범위·스크롤 유지', await page.evaluate((y) => document.querySelector('#clothesSearch').value === 'SearchBrand Navy' && document.querySelector('#searchScope').value === 'all' && Math.abs(scrollY - y) < 3, searchY));
+  await click('#clearSearch');
+  check('검색 초기화 → 이전 그룹별 보기', await page.evaluate(() => !document.querySelector('#clothesSearch') && document.querySelector('[data-mode="group"]').classList.contains('on')));
+  await click('[data-mode="search"]'); await searchInput('SearchBrand');
+  await page.reload(); await wait(150);
+  check('검색: 새로고침 시 초기화', await page.evaluate(() => !document.querySelector('#clothesSearch')));
+  await page.evaluate((original) => { db = JSON.parse(original); homeSearch.active = false; homeSearch.query = ''; save(); }, searchDb);
+
+  // 날짜별 착용 확인: 오늘 포함, FW/SS 공통, 명시적 없음 확인과 저장/복원
+  const wearOriginal = await page.evaluate(() => {
+    const original = JSON.stringify(db), today = todayStr(), start = addDays(today, -10);
+    db.usage = db.usage.filter((u) => u.date < start);
+    const fw = db.items.find((it) => it.type === 'FW'), ss = db.items.find((it) => it.type === 'SS');
+    db.usage.push({ id: 'CHECKFW', itemId: fw.id, date: addDays(today, -1), planned: false },
+      { id: 'CHECKSS', itemId: ss.id, date: addDays(today, -2), planned: false },
+      { id: 'CHECKPLAN', itemId: fw.id, date: addDays(today, -3), planned: true });
+    db.dailyChecks = { start, none: [addDays(today, -4)] }; save(); render(); return original;
+  });
+  await page.goto(URL + '#/'); await wait(100);
+  const wearState = await page.evaluate(() => {
+    const today = todayStr(), missing = missingWearDays(db);
+    return { today: missing.includes(today), count: missing.length, bothTypes: !missing.includes(addDays(today, -1)) && !missing.includes(addDays(today, -2)),
+      planned: missing.includes(addDays(today, -3)), none: !missing.includes(addDays(today, -4)),
+      oneLine: document.querySelector('#missingWearText').scrollWidth <= document.querySelector('#missingWearText').clientWidth,
+      summary: document.querySelector('#missingWearText').textContent };
+  });
+  check('착용 확인: 오늘 포함·FW/SS 실제 기록·없음 확인·예정 구분', wearState.today && wearState.count === 8 && wearState.bothTypes && wearState.planned && wearState.none, JSON.stringify(wearState));
+  check('착용 확인: 홈 안내 한 줄·총 일수 요약', wearState.oneLine && wearState.summary.includes('등 총 8일'));
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/wear-check-home-384.png') });
+  await page.setViewport({ width: 360, height: 740, deviceScaleFactor: 2, isMobile: true }); await wait(100);
+  check('착용 확인: 360px에서도 한 줄·가로 넘침 없음', await page.evaluate(() => document.querySelector('#missingWearText').scrollWidth <= document.querySelector('#missingWearText').clientWidth && document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.setViewport({ width: 384, height: 740, deviceScaleFactor: 2, isMobile: true });
+  await click('#missingWear'); await wait(100);
+  check('착용 확인: 전체 미확인 날짜 화면', await page.evaluate(() => location.hash === '#/checks' && document.querySelectorAll('a[href^="#/day/"]').length === 8));
+  await click('#wearStartEdit');
+  await page.evaluate(() => { document.querySelector('#wearStartDate').value = addDays(todayStr(), -7); document.querySelector('#wearStartForm').requestSubmit(); });
+  check('착용 확인 시작일 변경', await page.evaluate(() => db.dailyChecks.start === addDays(todayStr(), -7)));
+  const wearToday = await page.evaluate(() => todayStr());
+  await page.goto(URL + '#/day/' + wearToday); await wait(100);
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/wear-check-day-384.png') });
+  await click('#noWearConfirm');
+  check('착용 의류 없음 확인 → 오늘 경고 해제', await page.evaluate(() => db.dailyChecks.none.includes(todayStr()) && !missingWearDays(db).includes(todayStr())));
+  await page.reload(); await wait(100);
+  check('착용 의류 없음 확인 새로고침 유지', await page.evaluate(() => !!document.querySelector('#noWearCancel')));
+  await click('#noWearCancel');
+  check('없음 확인 취소 → 다시 미확인', await page.evaluate(() => missingWearDays(db).includes(todayStr())));
+  await click('#noWearConfirm');
+  const wearData = await page.evaluate(() => {
+    const today = todayStr(), before = JSON.stringify(db.dailyChecks);
+    const wb = dbToWorkbook(XLSX, db);
+    const restored = workbookToDb(XLSX, XLSX.read(XLSX.write(wb, { type: 'array', bookType: 'xlsx' })));
+    const excel = JSON.stringify(restored.dailyChecks) === before;
+    delete wb.Sheets['착용확인']; wb.SheetNames = wb.SheetNames.filter((n) => n !== '착용확인');
+    const old = workbookToDb(XLSX, wb), legacy = old.dailyChecks.start === today && old.dailyChecks.none.length === 0;
+    const simple = { usage: [] }; normalizeDailyChecks(simple, today); normalizeDailyChecks(simple, addDays(today, 1));
+    const migration = simple.dailyChecks.start === today;
+    const type = windowYear('FW', today) != null ? 'FW' : 'SS';
+    const item = db.items.find((it) => it.type === type);
+    const added = addUsage(item.id, today, { silent: true });
+    const replaced = !!added && !db.dailyChecks.none.includes(today) && !missingWearDays(db).includes(today);
+    markNoWear(today); const blockedReal = !db.dailyChecks.none.includes(today);
+    markNoWear(addDays(today, -3)); const blockedPlan = !db.dailyChecks.none.includes(addDays(today, -3));
+    removeUsage(added.id); const deleted = missingWearDays(db).includes(today);
+    markNoWear(addDays(today, 1)); const future = !db.dailyChecks.none.includes(addDays(today, 1));
+    const version = JSON.parse(JSON.stringify(db)); version.dailyChecks.none.push(today); replaceDb(version);
+    const restoredVersion = db.dailyChecks.none.includes(today);
+    const normalized = { usage: [], dailyChecks: { start: today, none: ['invalid', '2026-02-30', addDays(today, 1), addDays(today, -365 * 5 - 1), today, today] } };
+    normalizeDailyChecks(normalized, today);
+    return { excel, legacy, migration, replaced, blockedReal, blockedPlan, deleted, future, restoredVersion, clean: JSON.stringify(normalized.dailyChecks.none) === JSON.stringify([today]) };
+  });
+  check('착용 확인: 엑셀·예전 엑셀·마이그레이션·실제 추가/삭제·충돌·미래 차단·버전 복원·5년 정리', Object.values(wearData).every(Boolean), JSON.stringify(wearData));
+  await page.goto(URL + '#/day/' + await page.evaluate(() => addDays(todayStr(), 1))); await wait(100);
+  check('미래 날짜에는 착용 의류 없음 확인 없음', await page.evaluate(() => !document.querySelector('#noWearConfirm')));
+  await page.evaluate((original) => { db = JSON.parse(original); save(); }, wearOriginal);
+
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));
   await browser.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });

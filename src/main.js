@@ -22,6 +22,15 @@ if (!db.meta.ss2026) {
 }
 save();
 render();
+// 앱을 켜 둔 채 날짜가 바뀌어도 오늘의 착용 확인을 갱신한다.
+let wearCheckDay = todayStr();
+function refreshWearCheckDay() {
+  if (document.hidden || wearCheckDay === todayStr()) return;
+  wearCheckDay = todayStr();
+  save(); render();
+}
+setInterval(refreshWearCheckDay, 60000);
+document.addEventListener('visibilitychange', refreshWearCheckDay);
 // 웹 주소(https)로 열었을 때: 오프라인 실행 + 브라우저가 데이터를 임의로 지우지 않도록 요청
 if (location.protocol === 'https:') {
   navigator.serviceWorker?.register('sw.js');

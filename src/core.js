@@ -9,6 +9,26 @@ const addDays = (s, n) => { const d = parseYmd(s); d.setDate(d.getDate() + n); r
 const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
 const weekday = (s) => WEEK[parseYmd(s).getDay()];
 
+// 날짜별 착용 확인은 FW/SS 공통. 예전 데이터에는 도입일을 한 번만 설정한다.
+const validDay = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && addDays(s, 0) === s;
+function normalizeDailyChecks(db, today = todayStr()) {
+  const old = db.dailyChecks || {};
+  const cutoff = addDays(today, -365 * 5);
+  const occupied = new Set(db.usage.map((u) => u.date));
+  db.dailyChecks = {
+    start: validDay(old.start) && old.start <= today ? old.start : today,
+    none: [...new Set((Array.isArray(old.none) ? old.none : []).filter((date) => validDay(date) && date <= today && date >= cutoff && !occupied.has(date)))].sort(),
+  };
+}
+function missingWearDays(db, today = todayStr()) {
+  const start = db.dailyChecks?.start || today;
+  const cutoff = addDays(today, -365 * 5);
+  const done = new Set([...(db.dailyChecks?.none || []), ...db.usage.filter((u) => !u.planned).map((u) => u.date)]);
+  const missing = [];
+  for (let date = start > cutoff ? start : cutoff; date <= today; date = addDays(date, 1)) if (!done.has(date)) missing.push(date);
+  return missing;
+}
+
 // 시즌 상태: active(진행중) / ready(준비중) / ended(종료, 잠김). 상태가 없던 예전 데이터는 현재 시즌만 진행중
 const SEASON_STATUS = { active: '진행중', ready: '준비중', ended: '종료' };
 function normalizeSeasons(db) {
@@ -271,6 +291,8 @@ function dbToWorkbook(XLSX, db, kind = '') { // kind: 최신본 / 시즌최종�
   add('속성값', terms, ['항목', '값', '그림'], [10, 24, 6]); // 그림: Hood 값의 옷 그림 목 모양(후드/칼라/일반)
   add('시즌', seasons, ['ID', '구분', '이름', '시작일', '종료일', '현재', '상태'], [8, 5, 12, 11, 11, 5, 7]);
   add('정보', info, ['항목', '값'], [10, 80]);
+  const checks = db.dailyChecks || { start: todayStr(), none: [] };
+  add('착용확인', [{ '항목': '시작일', '날짜': checks.start }, ...checks.none.map((date) => ({ '항목': '착용 의류 없음', '날짜': date }))], ['항목', '날짜'], [20, 12]);
   return wb;
 }
 
@@ -352,6 +374,12 @@ function workbookToDb(XLSX, wb) {
     version: 1, seasons, currentSeason, viewType: 'FW', groups, colors, items, usage, terms, neck: neck || { ...NECK_DEFAULT },
     meta: { lastBackup: null, updated: new Date().toISOString() },
   };
+  if (wb.Sheets['착용확인']) {
+    const checks = rows('착용확인');
+    db.dailyChecks = { start: cellDate(checks.find((r) => r['항목'] === '시작일')?.['날짜']),
+      none: checks.filter((r) => r['항목'] === '착용 의류 없음').map((r) => cellDate(r['날짜'])) };
+  }
+  normalizeDailyChecks(db);
   normalizeTerms(db);
   normalizeSeasons(db);
   return db;
