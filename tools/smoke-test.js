@@ -396,6 +396,35 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   check('미래 날짜에는 착용 의류 없음 확인 없음', await page.evaluate(() => !document.querySelector('#noWearConfirm')));
   await page.evaluate((original) => { db = JSON.parse(original); save(); }, wearOriginal);
 
+  // 미입력 날짜 → 검색 → 해당 날짜로 실제 착용 기록
+  await page.setViewport({ width: 384, height: 740, deviceScaleFactor: 2, isMobile: true });
+  await page.evaluate(() => { homeSearch.active = false; daySearch.active = false; db.viewType = 'FW'; go('#/checks'); }); await wait(100);
+  const searchDate = await page.evaluate(() => addDays(todayStr(), -2));
+  await page.goto(URL + '#/day/' + searchDate); await wait(100);
+  await click('#daySearchToggle');
+  const searchItem = await page.evaluate(() => {
+    const it = db.items.find((i) => i.active && i.type === 'FW');
+    const input = document.querySelector('#dayClothesSearch'); input.value = it.brand;
+    input.dispatchEvent(new Event('input', { bubbles: true })); return { id: it.id, brand: it.brand };
+  });
+  check('날짜기록 검색: 검색 입력 초점·결과', await page.evaluate((id) => document.activeElement.id === 'dayClothesSearch' && !!document.querySelector('#daySearchResults [data-add="' + id + '"]'), searchItem.id));
+  await click('#daySearchResults [data-add="' + searchItem.id + '"]');
+  check('날짜기록 검색 결과: 선택한 과거 날짜로 기록창 열림', await page.evaluate((d) => document.querySelector('#uf [name="date"]').value === d, searchDate));
+  await page.evaluate(() => document.querySelector('#uf').requestSubmit()); await wait(100);
+  check('날짜기록 검색: 저장 후 검색 유지·기록 표시', await page.evaluate(({ id, date }) =>
+    db.usage.some((u) => u.itemId === id && u.date === date && !u.planned) &&
+    document.querySelector('#dayClothesSearch').value.length > 0 &&
+    document.querySelector('#daySearchResults [data-add="' + id + '"]').classList.contains('sel'), { id: searchItem.id, date: searchDate }));
+  await page.evaluate(() => { document.querySelector('#daySearchScope').value = 'all'; document.querySelector('#daySearchScope').dispatchEvent(new Event('change')); });
+  await page.screenshot({ path: path.resolve(__dirname, '../dist/day-search-384.png'), fullPage: true });
+  check('날짜기록 검색: 384px 가로 넘침 없음', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  check('날짜기록 검색: 전체 범위·초기화', await page.evaluate(() => {
+    const expected = searchItems(daySearch.query, 'all').filter((it) => it.active).length;
+    const matches = document.querySelectorAll('#daySearchResults [data-add]').length === expected;
+    document.querySelector('#daySearchClear').click(); return matches && !document.querySelector('#dayClothesSearch') && !!document.querySelector('[data-pg]');
+  }));
+  await page.evaluate((original) => { db = JSON.parse(original); save(); }, wearOriginal);
+
   check('전체 과정 오류 없음', errors.length === 0, errors.join(' | '));
   await browser.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });

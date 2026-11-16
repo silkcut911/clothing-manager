@@ -864,6 +864,29 @@ function markNoWear(date) {
   db.dailyChecks.none.push(date); save(); render();
 }
 let pickGroup = null;
+const daySearch = { active: false, query: '', scope: 'current' };
+function updateDaySearch(date) {
+  const target = document.getElementById('daySearchResults');
+  if (!target) return;
+  if (!daySearch.query.trim()) {
+    target.innerHTML = '<div class="empty">브랜드, 색상, 모델명 등으로 의류를 검색하세요.</div>'; return;
+  }
+  const found = searchItems(daySearch.query, daySearch.scope).filter((it) => it.active);
+  let h = `<div class="section-t" role="status">검색 결과 ${found.length}벌</div>`;
+  if (!found.length) h += '<div class="empty">검색 결과가 없습니다.</div>';
+  for (const type of ['FW', 'SS']) for (const group of typeGroups(type)) {
+    const items = found.filter((it) => it.groupId === group.id).sort((a, b) => a.order - b.order);
+    if (!items.length) continue;
+    h += `<div class="section-t">${type} · ${esc(group.name)}</div>` + itemTable(items, {
+      rowAttr: (it) => `data-add="${esc(it.id)}"`,
+      rowClass: (it) => db.usage.some((u) => u.date === date && u.itemId === it.id) ? 'sel' : '',
+      right: (it) => { const n = db.usage.filter((u) => u.date === date && u.itemId === it.id).length;
+        return `<span class="wear ${n ? 'done' : ''}">${n ? '✓' + (n > 1 ? n : '') : '+'}</span>`; },
+    });
+  }
+  target.innerHTML = h;
+  target.querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => askUsage(b.dataset.add, date)));
+}
 function viewDay(date) {
   date = date || todayStr();
   setTop({ title: '날짜별 기록', seg: true });
@@ -891,8 +914,13 @@ function viewDay(date) {
       esc(groupById(it.groupId)?.name) + (u.memo ? ' · ' + esc(u.memo) : ''),
     right: (it, { u }) => `<button class="wear done" style="color:var(--bad)" data-del="${u.id}" aria-label="삭제">×</button>`,
   }) + `</div>` : '<div class="card muted">기록 없음</div>';
-  h += `<div class="section-t">의류 추가 (누르면 날짜·실제/계획 선택)</div>
-    <div class="tabs">${groups.map((g) => `<button data-pg="${g.id}" class="${g.id === pickGroup ? 'on' : ''}">${esc(g.name)}</button>`).join('')}</div>`;
+  h += `<div class="row" style="margin:14px 2px 6px"><span class="section-t grow" style="margin:0">의류 추가</span><button class="btn sm${daySearch.active ? ' pri' : ''}" id="daySearchToggle" aria-pressed="${daySearch.active}">검색</button></div>
+    <div class="muted" style="margin-bottom:8px">누르면 날짜·실제/계획 선택</div>`;
+  if (daySearch.active) h += `<div class="card form"><label for="dayClothesSearch">의류 검색</label>
+    <input id="dayClothesSearch" type="search" value="${esc(daySearch.query)}" placeholder="예: Barbour Navy" autocomplete="off" aria-controls="daySearchResults">
+    <div class="row" style="margin-top:8px"><select id="daySearchScope" aria-label="검색 범위" style="flex:1"><option value="current" ${daySearch.scope === 'current' ? 'selected' : ''}>현재 ${db.viewType}</option><option value="all" ${daySearch.scope === 'all' ? 'selected' : ''}>FW·SS 전체</option></select><button class="btn sm" id="daySearchClear">검색 초기화</button></div></div><div id="daySearchResults"></div>`;
+  else {
+  h += `<div class="tabs">${groups.map((g) => `<button data-pg="${g.id}" class="${g.id === pickGroup ? 'on' : ''}">${esc(g.name)}</button>`).join('')}</div>`;
   const cands = pickGroup ? groupItems(pickGroup).filter((i) => i.active) : [];
   const nOn = (it) => recs.filter((r) => r.it.id === it.id).length;
   h += cands.length ? `<div class="clist">` + itemTable(cands, {
@@ -900,12 +928,26 @@ function viewDay(date) {
     rowClass: (it) => (nOn(it) ? 'sel' : ''),
     right: (it) => { const n = nOn(it); return `<span class="wear ${n ? 'done' : ''}">${n ? '✓' + (n > 1 ? n : '') : '+'}</span>`; },
   }) + `</div>` : '<div class="empty">활성 의류가 없습니다.</div>';
+  }
   h += lastYearHtml(date, db.viewType, '작년 이날');
   $app.innerHTML = h;
   const to = (d) => go('#/day/' + d);
   document.getElementById('prev').onclick = () => to(addDays(date, -1));
   document.getElementById('next').onclick = () => to(addDays(date, 1));
   document.getElementById('dt').onchange = (e) => e.target.value && to(e.target.value);
+  document.getElementById('daySearchToggle').onclick = () => {
+    daySearch.active = !daySearch.active; render();
+    if (daySearch.active) document.getElementById('dayClothesSearch').focus();
+  };
+  if (daySearch.active) {
+    const input = document.getElementById('dayClothesSearch');
+    const update = () => { daySearch.query = input.value; updateDaySearch(date); };
+    input.addEventListener('input', (e) => { if (!e.isComposing) update(); });
+    input.addEventListener('compositionend', update);
+    document.getElementById('daySearchScope').onchange = (e) => { daySearch.scope = e.target.value; updateDaySearch(date); };
+    document.getElementById('daySearchClear').onclick = () => { daySearch.query = ''; daySearch.active = false; render(); };
+    updateDaySearch(date);
+  }
   document.getElementById('noWearConfirm')?.addEventListener('click', () => markNoWear(date));
   document.getElementById('noWearCancel')?.addEventListener('click', () => {
     db.dailyChecks.none = db.dailyChecks.none.filter((d) => d !== date); save(); render();
