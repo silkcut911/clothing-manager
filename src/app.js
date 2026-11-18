@@ -552,6 +552,7 @@ function bindBanners() {
 
 // ---------- 그룹 ----------
 let groupFilter = { showOff: true, sort: 'order', edit: false };
+const groupSorts = { order: '기본순', less: '목표 미달순', last: '오래 안 입은 순' };
 function viewGroup(gid) {
   const g = groupById(gid);
   if (!g) return go('#/');
@@ -573,18 +574,16 @@ function viewGroup(gid) {
       <div class="boxes">${all.map((it) => `<i class="shp shp-${shapeOf(it)}" style="${chipStyle(it)}"></i>`).join('')}</div>
       ${usageBar(st, prog?.ratio, groupDates(all))}
     </div>
-    <div class="tabs">` + (editing
+    <div class="tabs group-tabs">` + (editing
       ? `<button data-edit class="on">✓ 순서 편집 완료</button>`
-      : `<button data-sort="order" class="${groupFilter.sort === 'order' ? 'on' : ''}">기본순</button>
-      <button data-sort="less" class="${groupFilter.sort === 'less' ? 'on' : ''}">목표 미달순</button>
-      <button data-sort="last" class="${groupFilter.sort === 'last' ? 'on' : ''}">오래 안 입은 순</button>
-      <button data-off class="${groupFilter.showOff ? 'on' : ''}">비활성 표시</button>
-      <button data-edit>⇅ 순서·그룹 편집</button>`) + `</div>`;
+      : `<button data-sort class="on" aria-haspopup="dialog" aria-label="정렬 기준 변경: ${groupSorts[groupFilter.sort]}">${groupSorts[groupFilter.sort]} ▾</button>
+      <button data-edit>⇅ 순서·그룹 편집</button>
+      <button data-off class="${groupFilter.showOff ? 'on' : ''}">비활성 표시</button>`) + `</div>`;
 
   if (editing) {
     const others = typeGroups(g.type);
     h += `<div class="muted" style="margin:0 2px 8px">↑↓로 순서를 바꾸고, 오른쪽에서 그룹을 고르면 그 그룹의 맨 뒤로 옮겨집니다.</div>`;
-    h += items.map(({ it }, i) => `<div class="item ${it.active ? '' : 'off'}">
+    h += items.map(({ it }, i) => `<div class="item ${it.active ? '' : 'off'}" data-order-item="${it.id}">
       <b class="muted" style="width:20px;text-align:right">${i + 1}</b>${chip(it, 'sm')}
       <div class="grow"><div class="title">${itemTitle(it)}</div><div class="muted">${specLine(it)}</div>
         <div class="row" style="gap:6px;margin-top:6px">
@@ -604,16 +603,41 @@ function viewGroup(gid) {
     if (!items.length) h += `<div class="empty">의류가 없습니다.</div>`;
   }
   $app.innerHTML = h;
-  $app.querySelectorAll('[data-sort]').forEach((b) => (b.onclick = () => { groupFilter.sort = b.dataset.sort; render(); }));
+  $app.querySelector('[data-sort]')?.addEventListener('click', () => {
+    const restore = keepScroll();
+    modal(`<h2 id="groupSortTitle">정렬 기준</h2><div style="display:grid;gap:8px">${Object.entries(groupSorts).map(([value, label]) =>
+      `<button class="btn block ${groupFilter.sort === value ? 'pri' : ''}" data-sort-choice="${value}" aria-pressed="${groupFilter.sort === value}">${label}</button>`).join('')}</div>`, (el, close) => {
+      el.setAttribute('role', 'dialog');
+      el.setAttribute('aria-modal', 'true');
+      el.setAttribute('aria-labelledby', 'groupSortTitle');
+      el.querySelectorAll('[data-sort-choice]').forEach((b) => (b.onclick = () => {
+        groupFilter.sort = b.dataset.sortChoice;
+        close();
+        restore();
+      }));
+    });
+  });
   $app.querySelector('[data-off]')?.addEventListener('click', () => { groupFilter.showOff = !groupFilter.showOff; render(); });
   $app.querySelector('[data-edit]').onclick = () => { groupFilter.edit = !groupFilter.edit; render(); };
   $app.querySelectorAll('[data-i]').forEach((el) => (el.onclick = (e) => { if (!e.target.closest('[data-wear]')) go('#/item/' + el.dataset.i); }));
   $app.querySelectorAll('[data-wear]').forEach((b) => (b.onclick = () => askUsage(b.dataset.wear, today)));
   $app.querySelectorAll('[data-mv]').forEach((b) => (b.onclick = () => {
+    const id = b.dataset.mv;
+    const cardTop = b.closest('[data-order-item]').getBoundingClientRect().top;
+    const restore = keepScroll();
     const i = all.findIndex((x) => x.id === b.dataset.mv);
     const j = i + Number(b.dataset.d);
+    if (i < 0 || j < 0 || j >= all.length) return;
     [all[i].order, all[j].order] = [all[j].order, all[i].order];
-    save(); render();
+    save(); restore();
+    const card = [...$app.querySelectorAll('[data-order-item]')].find((el) => el.dataset.orderItem === id);
+    const rect = card.getBoundingClientRect();
+    const top = $top.getBoundingClientRect().bottom + 8;
+    const bottom = $nav.getBoundingClientRect().top - 8;
+    // 옮긴 카드가 같은 화면 위치에 머물고, 위·아래 메뉴에 가리지 않게 한다.
+    const targetTop = Math.max(top, Math.min(cardTop, bottom - rect.height));
+    window.scrollBy(0, rect.top - targetTop);
+    card.querySelector(`[data-mv][data-d="${b.dataset.d}"]:not(:disabled)`)?.focus({ preventScroll: true });
   }));
   $app.querySelectorAll('[data-mg]').forEach((sel) => (sel.onchange = () => {
     const it = itemById(sel.dataset.mg);

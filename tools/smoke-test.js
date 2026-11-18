@@ -42,6 +42,66 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   }
   check('384px에서 그룹 표가 화면 폭 안', fits.every(Boolean), JSON.stringify(fits));
 
+  // 그룹 정렬 버튼 통합 + 화면 아래 카드의 연속 순서 이동 회귀
+  const groupOriginal = await page.evaluate(() => JSON.stringify(db));
+  const reorderGroup = await page.evaluate(() => db.groups.filter((g) => g.type === 'FW')
+    .sort((a, b) => groupItems(b.id).length - groupItems(a.id).length)[0].id);
+  await page.goto(URL + '#/group/' + reorderGroup); await wait(100);
+  for (const [value, label] of [['less', '목표 미달순'], ['last', '오래 안 입은 순'], ['order', '기본순']]) {
+    await click('[data-sort]');
+    await click('[data-sort-choice="' + value + '"]');
+    check('그룹 정렬 선택: ' + label, await page.evaluate(({ value, label }) => {
+      const ids = [...document.querySelectorAll('[data-i]')].map((el) => el.dataset.i);
+      const stats = ids.map((id) => { const it = itemById(id), s = itemStats(db, it); return value === 'less' ? s.cur - it.tg : s.last || ''; });
+      const sorted = value === 'order' ? ids.join() === groupItems(location.hash.split('/')[2]).map((it) => it.id).join()
+        : stats.every((v, i) => !i || stats[i - 1] <= v);
+      return sorted && document.querySelectorAll('[data-sort]').length === 1 &&
+        document.querySelector('[data-sort]').textContent === label + ' ▾' && !document.querySelector('.modal-bg');
+    }, { value, label }));
+  }
+  for (const width of [384, 360]) {
+    await page.setViewport({ width, height: 740, deviceScaleFactor: 2, isMobile: true });
+    await page.evaluate(() => { groupFilter.sort = 'last'; render(); });
+    check(width + 'px 그룹 버튼 가로 넘침 없음', await page.evaluate(() => {
+      const tabs = document.querySelector('.group-tabs');
+      return tabs.scrollWidth <= tabs.clientWidth && document.documentElement.scrollWidth <= innerWidth;
+    }));
+    await page.screenshot({ path: path.resolve(__dirname, '../dist/group-sort-' + width + '.png'), fullPage: true });
+    await click('[data-edit]');
+    const movedId = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-order-item]')];
+      const card = cards[cards.length - 2]; card.scrollIntoView({ block: 'center' }); return card.dataset.orderItem;
+    });
+    let tracked = true;
+    // 맨 위까지 올린 뒤 맨 아래까지 내려 경계 버튼·저장·카드 노출을 함께 확인한다.
+    for (const direction of [-1, 1]) {
+      for (let n = 0; n < 100; n++) {
+        const result = await page.evaluate(({ id, direction }) => {
+          const selector = '[data-order-item="' + id + '"]';
+          const card = document.querySelector(selector);
+          const button = card.querySelector('[data-d="' + direction + '"]');
+          if (button.disabled) return { done: true, ok: true };
+          const before = groupItems(itemById(id).groupId).findIndex((it) => it.id === id);
+          button.click();
+          const after = groupItems(itemById(id).groupId).findIndex((it) => it.id === id);
+          const rect = document.querySelector(selector).getBoundingClientRect();
+          const saved = JSON.parse(localStorage.getItem(STORE_KEY)).items.find((it) => it.id === id);
+          return { done: false, ok: after === before + direction && saved.order === itemById(id).order &&
+            rect.top >= document.querySelector('header.top').getBoundingClientRect().bottom &&
+            rect.bottom <= document.querySelector('nav.bottom').getBoundingClientRect().top };
+        }, { id: movedId, direction });
+        tracked = tracked && result.ok;
+        if (result.done) break;
+        if (n === 99) tracked = false;
+      }
+    }
+    check(width + 'px 연속 위·아래 이동: 순서 저장·카드 화면 유지·처음/끝 경계', tracked);
+    await page.screenshot({ path: path.resolve(__dirname, '../dist/group-reorder-' + width + '.png') });
+    await click('[data-edit]');
+  }
+  await page.setViewport({ width: 384, height: 740, deviceScaleFactor: 2, isMobile: true });
+  await page.evaluate((original) => { db = JSON.parse(original); groupFilter.sort = 'order'; save(); render(); }, groupOriginal);
+
   // 2-1. SS 추가 데이터: SS 2026 종료(최종본) + SS 2027 준비중, 12벌
   const ss = await page.evaluate(() => {
     const items = db.items.filter((i) => i.type === 'SS');
